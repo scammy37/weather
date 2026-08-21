@@ -161,22 +161,16 @@ marine down, archive down).
 
 ## Publishing
 
-The site deploys itself on every push to `main` via
-`.github/workflows/pages.yml`, gated on the unit tests.
+The site is served by GitHub's built-in Pages builder, straight from the
+repository root on `main` (Settings → Pages → **Deploy from a branch**).
+Push to `main` and the change is live within a minute or two — there is no
+deploy workflow to maintain, because the dashboard is static files with no
+build step.
 
-**One-time setup, needed once before the first deploy succeeds:**
+`.nojekyll` is what stops Pages from running the site through Jekyll.
 
-> Settings → Pages → Build and deployment → **Source: GitHub Actions**
->
-> ([open that page](https://github.com/scammy37/weather/settings/pages))
-
-Then re-run the workflow: Actions tab → the latest run → *Re-run all jobs*.
-
-This step cannot be automated. Creating a Pages site requires
-repository-admin rights, and a workflow's `GITHUB_TOKEN` never has them —
-however its permissions are declared, the API answers *"Resource not
-accessible by integration"*. The workflow's preflight step detects this and
-prints the fix rather than failing cryptically.
+`.github/workflows/ci.yml` runs the unit tests on every push and pull
+request. It does not deploy.
 
 ## PWA install
 

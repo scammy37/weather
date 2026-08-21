@@ -1,0 +1,33 @@
+name: Tests
+
+# Publishing is handled by GitHub's built-in Pages builder, which serves the
+# repository root straight from `main` (Settings → Pages → Deploy from a
+# branch). The dashboard is static files with no build step, so nothing here
+# needs to deploy anything — this workflow only guards the maths.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Aggregation unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # 71 assertions on the climatology aggregation — rate vs. total metrics,
+      # leap years, partial-month guards, null-safety. No network and no
+      # browser, so this stays fast and deterministic.
+      #
+      # test/e2e.mjs is deliberately not run here: it needs a Playwright
+      # browser download, which would add minutes to every push. Run it
+      # locally with `node test/e2e.mjs`.
+      - run: node test/unit.mjs
