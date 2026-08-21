@@ -1,8 +1,16 @@
 name: Deploy dashboard to GitHub Pages
 
 # The dashboard is a static site with no build step — the repository root is
-# what gets served. This workflow also turns Pages on the first time it runs
-# (`enablement: true`), so no manual settings toggle is needed.
+# what gets served.
+#
+# ONE-TIME SETUP, required before the first successful deploy:
+#   Settings → Pages → Build and deployment → Source → "GitHub Actions"
+#
+# This cannot be automated. `actions/configure-pages` has an `enablement`
+# option, but *creating* a Pages site needs repository-admin rights, which the
+# default GITHUB_TOKEN never has however its permissions are declared — the API
+# answers "Resource not accessible by integration". The preflight step below
+# detects that case and prints the fix rather than failing cryptically.
 
 on:
   push:
@@ -42,9 +50,26 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check that Pages is enabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "Pages is enabled — continuing."
+          else
+            echo "::error title=GitHub Pages is not enabled::Enable it once, then re-run this workflow."
+            echo ""
+            echo "  1. Open  https://github.com/${GITHUB_REPOSITORY}/settings/pages"
+            echo "  2. Under 'Build and deployment', set Source to 'GitHub Actions'"
+            echo "  3. Re-run this workflow (Actions tab → this run → Re-run all jobs)"
+            echo ""
+            echo "This is a one-time step. A workflow cannot do it for you: creating a"
+            echo "Pages site requires repository-admin rights that GITHUB_TOKEN lacks."
+            exit 1
+          fi
+
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
