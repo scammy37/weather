@@ -159,6 +159,25 @@ selection, table sorting, the comparison view, caching, CSV export, dark mode,
 mobile layout, foreign time zones, and three failure modes (everything down,
 marine down, archive down).
 
+## Publishing
+
+The site deploys itself on every push to `main` via
+`.github/workflows/pages.yml`, gated on the unit tests.
+
+**One-time setup, needed once before the first deploy succeeds:**
+
+> Settings → Pages → Build and deployment → **Source: GitHub Actions**
+>
+> ([open that page](https://github.com/scammy37/weather/settings/pages))
+
+Then re-run the workflow: Actions tab → the latest run → *Re-run all jobs*.
+
+This step cannot be automated. Creating a Pages site requires
+repository-admin rights, and a workflow's `GITHUB_TOKEN` never has them —
+however its permissions are declared, the API answers *"Resource not
+accessible by integration"*. The workflow's preflight step detects this and
+prints the fix rather than failing cryptically.
+
 ## PWA install
 
 The dashboard installs as a Progressive Web App. In Chrome or Edge, use the
