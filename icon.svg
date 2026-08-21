@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Three Homes Weather">
+  <rect width="512" height="512" rx="96" fill="#123a5f"/>
+  <circle cx="188" cy="186" r="66" fill="#eda100"/>
+  <g fill="#fcfcfb">
+    <path d="M300 300c0-46 37-83 83-83 40 0 73 28 81 66 30 4 52 29 52 59 0 33-27 60-60 60H316c-38 0-69-31-69-69 0-16 6-31 15-43 12 6 25 10 38 10z" opacity=".95"/>
+  </g>
+  <g fill="#fcfcfb" opacity=".95">
+    <path d="M96 384l72-64 72 64v72H96z"/>
+    <path d="M60 388l108-96 108 96-20 22-88-78-88 78z"/>
+  </g>
+  <g stroke="#3987e5" stroke-width="18" stroke-linecap="round">
+    <line x1="150" y1="470" x2="150" y2="492"/>
+    <line x1="212" y1="470" x2="212" y2="492"/>
+    <line x1="274" y1="470" x2="274" y2="492"/>
+  </g>
+</svg>
