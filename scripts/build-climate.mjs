@@ -114,7 +114,7 @@ const hourPause = est.weight > TARGET_PER_HOUR
   : 0;
 const autoPause = Math.round(Math.max(minutePause, hourPause));
 const PAUSE_MS = args.includes('--pause') ? +argOf('--pause', 0) : autoPause;
-const sleep = ms => (ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve());
+api.setPacing(PAUSE_MS);
 
 const t0 = Date.now();
 const log = (...m) => console.log(`[${String(Math.round((Date.now() - t0) / 1000)).padStart(4)}s]`, ...m);
@@ -184,7 +184,6 @@ for (const loc of homes) {
 
   for (const period of periods) {
     log(`${loc.name} · ${period}: fetching archive…`);
-    await sleep(PAUSE_MS);
     try {
       const arch = await api.fetchArchive(loc, period, (done, total, label) =>
         log(`  ${done}/${total} — ${label}`));
@@ -209,7 +208,6 @@ for (const loc of homes) {
       failures++;
       log(`  FAILED: ${String(err && err.message || err)}`);
     }
-    await sleep(PAUSE_MS);
   }
 }
 

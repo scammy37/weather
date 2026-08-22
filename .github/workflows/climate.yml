@@ -45,6 +45,10 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the commit step rebases onto main, which a shallow
+          # clone cannot do.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -85,15 +89,51 @@ jobs:
 
       - name: Commit if the data changed
         run: |
+          set -euo pipefail
           git config user.name  'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- data/climate.json; then
-            echo "No change in data/climate.json — nothing to commit."
+
+          # Stage FIRST, then compare the index. `git diff` alone only looks at
+          # tracked files, so on the very first run — when data/climate.json is
+          # brand new and untracked — it reports "no change" and the freshly
+          # built data is silently thrown away. That is exactly what happened
+          # on run #2: the build succeeded, the file was written, and the job
+          # went green having committed nothing.
+          git add data/climate.json
+          if git diff --cached --quiet -- data/climate.json; then
+            echo "data/climate.json is byte-identical to what is committed — nothing to do."
             exit 0
           fi
-          git add data/climate.json
+
           git commit -m "Refresh climate normals ($(date -u +%Y-%m-%d))
 
           Rebuilt by .github/workflows/climate.yml from the Open-Meteo ERA5
           archive. Regenerate locally with: node scripts/build-climate.mjs"
-          git push
+
+          # The build takes long enough that main can move underneath it.
+          # Rebase onto whatever landed; this commit only touches a data file
+          # nothing else writes, so there is nothing to conflict with.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main || { echo "::error::Rebase failed — resolve by hand."; exit 1; }
+            if git push origin HEAD:main; then
+              echo "Pushed."
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt) — refetching and retrying."
+            sleep $((attempt * 5))
+          done
+          echo "::error::Could not push the rebuilt normals after 3 attempts."
+          exit 1
+
+      - name: Confirm the data is actually on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if git cat-file -e origin/main:data/climate.json 2>/dev/null; then
+            size=$(git cat-file -s "$(git rev-parse origin/main:data/climate.json)")
+            echo "data/climate.json is on main — $((size / 1024)) KB."
+          else
+            echo "::error::data/climate.json is NOT on main. The build produced data but it never landed."
+            exit 1
+          fi

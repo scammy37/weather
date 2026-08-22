@@ -331,11 +331,16 @@ async function main() {
   ok('the overview degrades to per-card notices rather than a blank page',
      (await page2.$$('.ov-card')).length === 3 &&
      (await page2.textContent('#liveHost')).includes('Live feed unavailable'));
-  /* The normals error belongs to a single home, so open one. */
+  /* The normals error belongs to a single home, so open one. Wait for the
+     settled state rather than the first appearance of an error element — the
+     panel legitimately cycles through loading while retries are in flight. */
   await page2.click('.tab[data-id="nmb"]');
-  await page2.waitForSelector('#climateStatus .banner.err', { timeout: 90000 });
+  await page2.waitForFunction(
+    () => (document.getElementById('climateStatus').textContent || '').includes('Could not build'),
+    { timeout: 90000 }).catch(() => {});
+  const climTxt = (await page2.textContent('#climateStatus')).trim();
   ok('normals failure is explained, not silent',
-     (await page2.textContent('#climateStatus')).includes('Could not build'));
+     climTxt.includes('Could not build'), climTxt.slice(0, 200));
   await page2.screenshot({ path: path.join(SHOTS, '04-offline.png') });
   await page2.close();
 

@@ -67,6 +67,24 @@ function limitWindow(reason) {
   return 'unknown';
 }
 
+/* --- request pacing ------------------------------------------------------
+   A global minimum gap between requests. The browser never needs this — it
+   makes a handful of calls — but the precompute script does: Open-Meteo caps
+   weighted calls per minute as well as per hour, and a 10-year archive chunk
+   is worth ~444 of a 600/minute allowance, so two cannot share a minute.
+
+   Enforcing it here rather than in the caller means every request is covered,
+   including the chunks inside fetchArchive and the per-year marine pulls,
+   which a caller-side sleep silently missed. */
+let PACE_MS = 0, lastRequestAt = 0;
+function setPacing(ms) { PACE_MS = Math.max(0, ms | 0); }
+async function awaitSlot() {
+  if (!PACE_MS) return;
+  const wait = lastRequestAt + PACE_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastRequestAt = Date.now();
+}
+
 /* --- low-level fetch ---------------------------------------------------- */
 async function apiGet(url, { label = 'request', retries = 3, timeout = 45000 } = {}) {
   const entry = diagStart(label, url);
@@ -79,6 +97,7 @@ async function apiGet(url, { label = 'request', retries = 3, timeout = 45000 } =
         ? 62000 : 600 * 2 ** (attempt - 1);
       await sleep(wait);
     }
+    await awaitSlot();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeout);
     try {
@@ -388,7 +407,7 @@ function clearOurCache() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { API, apiGet, RateLimitError, isRateLimit, limitWindow, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
+  module.exports = { API, apiGet, setPacing, RateLimitError, isRateLimit, limitWindow, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
                      fetchMarineArchive, decadeChunks, mergeDaily, hourlyToDaily,
                      ARCHIVE_CORE, ARCHIVE_EXT, DIAG, cacheGet, cacheSet, cacheKey, clearOurCache };
 }

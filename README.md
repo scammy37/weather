@@ -101,10 +101,11 @@ The free tier allows 10,000 calls/day and **5,000/hour**. At the original
 rate-limited itself. Precomputing drops a visitor's cost to the live feed
 alone — about **5 weighted calls**.
 
-The build script paces itself against both limits. The per-minute cap (600) is
-usually the binding one: a single 10-year, 17-variable chunk is worth ~444, so
-two cannot share a minute. A 10-year build takes about half an hour; a 30-year
-one about ninety minutes.
+The build script paces itself against both limits, enforced inside the fetch
+layer so every request is covered. The per-minute cap (600) is usually the
+binding one: a single 10-year, 17-variable chunk is worth ~444, so two cannot
+share a minute. A 10-year build takes about half an hour; a 30-year one about
+ninety minutes.
 
 Only the default period is precomputed. Selecting another falls back to building
 it live, and the page says so. Runs **merge** into `data/climate.json`, so
