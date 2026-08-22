@@ -223,5 +223,39 @@ ok('a flat series trends to zero',
 ok('too few points returns null',
    trendPerDecade(warming.slice(0, 3), 'meanTemp') === null);
 
+console.log('\n\x1b[1mmodel acceptance requires every variable, not just temperature\x1b[0m');
+/* ERA5-Land shipped once with perfect highs and no precipitation at all,
+   because the coverage check only looked at temperature. */
+const api2 = require('../js/api.js');
+const full = Array.from({ length: 100 }, (_, i) => i);
+const empty = Array.from({ length: 100 }, () => null);
+eq('a full series reports full coverage', api2.coverage(full), 1);
+eq('an all-null series reports zero coverage', api2.coverage(empty), 0);
+eq('a quarter-populated series reports 0.25',
+   api2.coverage([1, null, null, null]), 0.25);
+ok('an empty series would be rejected at the 0.8 threshold', api2.coverage(empty) < 0.8);
+ok('the archive model default is ERA5, not ERA5-Land',
+   api2.ARCHIVE_MODEL === null,
+   `ARCHIVE_MODEL is ${JSON.stringify(api2.ARCHIVE_MODEL)} — ERA5-Land returns no precipitation`);
+
+console.log('\n\x1b[1maggregation reports missing precipitation as missing\x1b[0m');
+/* If a model does return empty precipitation, the totals must come back null
+   rather than a confident zero — "no rain ever" and "no data" are different. */
+const noPrecip = frostSynth([2020, 2021], 79, 314);
+noPrecip.precipitation_sum = noPrecip.time.map(() => null);
+noPrecip.snowfall_sum = noPrecip.time.map(() => null);
+const npRows = aggregateMonthly(noPrecip, sunClim);
+ok('a month with no precipitation data reports null, not 0',
+   npRows[0].precipTotal === null, String(npRows[0].precipTotal));
+ok('and the annual total is null too',
+   annualSummary(npRows).annualPrecip === null, String(annualSummary(npRows).annualPrecip));
+/* "It did not snow" and "we have no snow data" are different claims, and
+   reporting the second as the first told New Jersey it gets no snow. */
+ok('missing snowfall data reports null, not a confident zero',
+   npRows[0].snowfall === null, String(npRows[0].snowfall));
+ok('missing snow days report null too', npRows[0].snowDays === null, String(npRows[0].snowDays));
+ok('a real zero is still zero, not null',
+   rows[6].snowfall === 0, String(rows[6].snowfall));
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

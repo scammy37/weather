@@ -100,6 +100,10 @@ function aggregateMonthly(daily, sunClim) {
     if (idxs.length < MIN_DAYS_FOR_MONTH) continue;
     const mo = +key.slice(5, 7) - 1;
     let precipSum = 0, rainSum = 0, snowSum = 0, hrsSum = 0, et0Sum = 0;
+    /* Counted separately from the sums: a month with no snowfall readings at
+       all must report "unknown", not "0 inches". Those are different claims,
+       and a model that silently drops a variable made exactly that mistake. */
+    let nSnow = 0, nHrs = 0, nEt0 = 0;
     let wet = 0, heavy = 0, snowD = 0, sunny = 0, partly = 0, cloudy = 0;
     let hot = 0, veryHot = 0, freeze = 0, hard = 0, beach = 0, pleasant = 0;
     let breezy = 0, strongWind = 0, severeWind = 0;
@@ -110,9 +114,9 @@ function aggregateMonthly(daily, sunClim) {
       const p = precip[i], r = rain[i], sn = snow[i];
       if (isNum(p)) { precipSum += p; nPrecip++; if (p >= TH.wetDay) wet++; if (p >= TH.heavyRainDay) heavy++; }
       if (isNum(r)) rainSum += r;
-      if (isNum(sn)) { snowSum += sn; if (sn >= TH.snowDay) snowD++; }
-      if (isNum(precipHrs[i])) hrsSum += precipHrs[i];
-      if (isNum(et0[i])) et0Sum += et0[i];
+      if (isNum(sn)) { snowSum += sn; nSnow++; if (sn >= TH.snowDay) snowD++; }
+      if (isNum(precipHrs[i])) { hrsSum += precipHrs[i]; nHrs++; }
+      if (isNum(et0[i])) { et0Sum += et0[i]; nEt0++; }
 
       const dl = daylight[i], ss = sunshine[i];
       let ratio = null;
@@ -151,13 +155,13 @@ function aggregateMonthly(daily, sunClim) {
       days,
       precipTotal: nPrecip ? precipSum : null,
       rainfall:    nPrecip ? rainSum   : null,
-      snowfall:    snowSum,
-      precipHours: hrsSum,
-      et0:         et0Sum,
+      snowfall:    nSnow ? snowSum : null,
+      precipHours: nHrs  ? hrsSum  : null,
+      et0:         nEt0  ? et0Sum  : null,
       wetDays: nPrecip ? wet : null,
       heavyRainDays: nPrecip ? heavy : null,
       dryDays: nPrecip ? days - wet : null,
-      snowDays: snowD,
+      snowDays: nSnow ? snowD : null,
       sunnyDays:  nSun ? sunny  * days / nSun : null,   // scale to a full month
       partlyDays: nSun ? partly * days / nSun : null,
       cloudyDays: nSun ? cloudy * days / nSun : null,

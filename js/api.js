@@ -32,14 +32,26 @@ const API = {
 
 const UNITS = 'temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch';
 
-/* ERA5 runs on a ~17 mile grid, so a coastal cell blends land and sea and drags
-   summer maxima down — the first build had North Myrtle Beach at an 86°F July
-   high against a published ~89°F, and 6 days a year over 90°F against a real
-   20–30. ERA5-Land is ~5.6 miles and land-only, which should place these homes
-   properly. It is requested first and the default model is the fallback, so a
-   variable ERA5-Land does not carry can never blank the dashboard. */
-const ARCHIVE_MODEL = 'era5_land';
-const MIN_COVERAGE = 0.8;      // fraction of days that must carry a temperature
+/* Which archive model to prefer, or null for Open-Meteo's default (ERA5).
+
+   ERA5-Land was tried here on the theory that its finer ~5.6 mile land-only
+   grid would fix a suspected coastal warm-season bias. Measured against NOAA
+   station normals over the identical 1991–2020 window, it did not: ERA5 was
+   closer on daily highs at two of the three homes (+0.4°F vs −1.2°F at North
+   Myrtle Beach), and ERA5-Land returned NO precipitation or snowfall at all,
+   which silently wiped the rain and snow charts.
+
+   So the default stands, and the theory is recorded rather than repeated.
+   scripts/validate-climate.mjs re-measures both models on every rebuild; if
+   ERA5-Land ever wins, this is the one line to change. */
+const ARCHIVE_MODEL = null;
+const MIN_COVERAGE = 0.8;
+
+/* Variables a model must actually deliver before its data is accepted.
+   Checking temperature alone is what let ERA5-Land through with empty
+   precipitation: the highs looked perfect and the rain charts were blank. */
+const REQUIRED_COVERAGE = ['temperature_2m_max', 'temperature_2m_min',
+                           'precipitation_sum', 'snowfall_sum'];
 
 /* --- diagnostics -------------------------------------------------------- */
 /* Every call lands here so the Data Sources panel can show exactly what
@@ -405,13 +417,18 @@ async function fetchArchive(loc, period, onProgress) {
     if (model) {
       try {
         part = await apiGet(base(c, ARCHIVE_CORE, model), { label: `${label} [${model}]`, retries: 1, timeout: 60000 });
-        const cov = coverage(part.daily && part.daily.temperature_2m_max);
-        if (cov < MIN_COVERAGE) {
-          /* Land-only models return nulls over water. Better to notice that
-             here than to publish a table full of gaps. */
+        /* Every required variable is checked, not just temperature: a model
+           that answers with perfect highs and no precipitation at all must be
+           rejected, not accepted with blank rain charts. */
+        const thin = REQUIRED_COVERAGE
+          .map(k => [k, coverage(part.daily && part.daily[k])])
+          .filter(([, cov]) => cov < MIN_COVERAGE);
+        if (thin.length) {
           part = null;
           model = null;
-          modelNote = `${ARCHIVE_MODEL} rejected (${Math.round(cov * 100)}% coverage) — using the default model`;
+          modelNote = `${ARCHIVE_MODEL} rejected — `
+            + thin.map(([k, cov]) => `${k} ${Math.round(cov * 100)}% covered`).join(', ')
+            + ' — using the default model';
         }
       } catch (_) {
         model = null;
