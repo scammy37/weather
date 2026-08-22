@@ -191,40 +191,45 @@
   .radar-wrap a { display:block; width:100%; }
   .radar-loading { padding:40px 20px; color:var(--muted); font-size:.85rem; text-align:center; }
 
-  /* ---- radar band on each overview card -------------------------------- */
-  /* Full width and short. A square in a side column pushed the readings into a
-     narrow stack and left white space beside it; a band spends the width the
-     card already has. */
-  .ov-mid { display:flex; flex-direction:column; gap:11px; }
-  .ov-mid-l { display:flex; flex-direction:column; gap:11px; min-width:0; }
-  .ov-radar { width:100%; }
+  /* ---- live radar row --------------------------------------------------- */
+  /* Three equal squares, one per home. Square because the NWS loop is square
+     with the station at its centre: any other aspect ratio throws away range
+     in one direction. */
+  .rr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .rr-cell { display:flex; flex-direction:column; gap:6px; min-width:0; align-items:center; }
+  .rr-name { font-size:.78rem; font-weight:700; color:var(--ink2); align-self:flex-start; }
+  /* Capped: at full width these are 405px squares, which is 400px of radar
+     before the reader reaches a single temperature. 300 is legible and leaves
+     the quick-reference table on screen. */
+  .rr-slot { width:100%; max-width:300px; }
   .ov-radar-btn {
-    display:block; width:100%; height:62px; padding:0; overflow:hidden; position:relative;
-    border:1px solid var(--border); border-radius:10px; background:var(--surface2);
+    display:block; width:100%; aspect-ratio:1/1; padding:0; overflow:hidden; position:relative;
+    border:1px solid var(--border); border-radius:11px; background:var(--surface2);
     cursor:zoom-in; font-family:inherit;
   }
   .ov-radar-btn:hover { border-color:var(--accent); }
   .ov-radar-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  /* The loop is square with the station at its centre, so cover crops the top
-     and bottom and keeps the station in view. */
   .ov-radar-img { width:100%; height:100%; object-fit:cover; display:block; }
   .ov-radar-cap {
-    position:absolute; left:6px; bottom:6px; padding:1px 6px; border-radius:5px;
-    background:rgba(0,0,0,.6); color:#fff; font-size:.6rem; font-weight:700; letter-spacing:.03em;
+    position:absolute; left:8px; bottom:8px; padding:2px 7px; border-radius:6px;
+    background:rgba(0,0,0,.6); color:#fff; font-size:.66rem; font-weight:700; letter-spacing:.03em;
   }
   .ov-radar-zoom {
-    position:absolute; right:6px; bottom:6px; width:20px; height:20px; border-radius:5px;
-    background:rgba(0,0,0,.6); color:#fff; font-size:.7rem; line-height:20px; text-align:center;
+    position:absolute; right:8px; bottom:8px; width:22px; height:22px; border-radius:6px;
+    background:rgba(0,0,0,.6); color:#fff; font-size:.74rem; line-height:22px; text-align:center;
   }
   .ov-radar-ph {
-    width:100%; height:62px; border:1px dashed var(--border); border-radius:10px;
+    width:100%; aspect-ratio:1/1; border:1px dashed var(--border); border-radius:11px;
     display:flex; align-items:center; justify-content:center;
-    color:var(--muted); font-size:.66rem; background:var(--surface2);
+    color:var(--muted); font-size:.72rem; background:var(--surface2);
   }
-  /* One card per row below this width, so the band can be taller without
-     costing anything. */
+  /* Below the three-across breakpoint they stack, and a full-width square is
+     enormous — cap it so the page does not become three screens of radar. */
   @media(max-width:1080px){
-    .ov-radar-btn, .ov-radar-ph { height:120px; }
+    .rr-grid { grid-template-columns:1fr; }
+    .rr-cell { align-items:center; }
+    .rr-slot { max-width:360px; }
+    .rr-name { align-self:flex-start; }
   }
 
   /* ---- full-size radar viewer ------------------------------------------ */
@@ -524,13 +529,13 @@
   <span id="footMeta"></span>
 </footer>
 
-<script src="js/config.js?v=3d70fa5d1c"></script>
-<script src="js/units.js?v=3d70fa5d1c"></script>
-<script src="js/solar.js?v=3d70fa5d1c"></script>
-<script src="js/api.js?v=3d70fa5d1c"></script>
-<script src="js/climate.js?v=3d70fa5d1c"></script>
-<script src="js/charts.js?v=3d70fa5d1c"></script>
-<script src="js/app.js?v=3d70fa5d1c"></script>
+<script src="js/config.js?v=ab7d7db6ec"></script>
+<script src="js/units.js?v=ab7d7db6ec"></script>
+<script src="js/solar.js?v=ab7d7db6ec"></script>
+<script src="js/api.js?v=ab7d7db6ec"></script>
+<script src="js/climate.js?v=ab7d7db6ec"></script>
+<script src="js/charts.js?v=ab7d7db6ec"></script>
+<script src="js/app.js?v=ab7d7db6ec"></script>
 <script>
   /* Progressive install + offline shell. Skipped on file:// where service
      workers are not permitted, and non-fatal if registration is refused. */

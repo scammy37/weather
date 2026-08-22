@@ -11,15 +11,15 @@
 /* Both the cache name and the ?v= stamps below are written by
    scripts/stamp-assets.mjs from a hash of the shell's contents. Do not edit
    them by hand; test/globals.mjs fails if they are stale. */
-const CACHE = 'weather-3d70fa5d1c';
+const CACHE = 'weather-ab7d7db6ec';
 
 /* Must list every script index.html loads. test/globals.mjs asserts this:
    js/units.js was missing here once, which would have broken the installed
    app offline while working perfectly online. */
 const SHELL = [
   './', './index.html', './manifest.json', './icon.svg',
-  './js/config.js?v=3d70fa5d1c', './js/units.js?v=3d70fa5d1c', './js/solar.js?v=3d70fa5d1c', './js/api.js?v=3d70fa5d1c',
-  './js/climate.js?v=3d70fa5d1c', './js/charts.js?v=3d70fa5d1c', './js/app.js?v=3d70fa5d1c'
+  './js/config.js?v=ab7d7db6ec', './js/units.js?v=ab7d7db6ec', './js/solar.js?v=ab7d7db6ec', './js/api.js?v=ab7d7db6ec',
+  './js/climate.js?v=ab7d7db6ec', './js/charts.js?v=ab7d7db6ec', './js/app.js?v=ab7d7db6ec'
 ];
 
 /* Best-effort extras: nice to have offline, but their absence must not stop

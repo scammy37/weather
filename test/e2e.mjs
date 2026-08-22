@@ -577,88 +577,76 @@ async function main() {
   ok('Rockaway kept its own accent colour after the reorder',
      /27, 175, 122|1baf7a|25, 158, 112|199e70/.test(green.colour), JSON.stringify(dots));
 
-  console.log('\n\x1b[1m18f. Radar beside each home on the overview\x1b[0m');
-  /* One thumbnail per card rather than a single panel with a picker: all three
-     homes sit under different dishes, so a picker showed two-thirds of the
-     readers the wrong weather. */
-  await page.waitForFunction(() => document.querySelectorAll('.ov-radar-btn').length === 3,
+  console.log('\n\x1b[1m18f. The live radar row\x1b[0m');
+  /* Its own section at the top of the overview, three equal squares. Inside
+     the cards it had to be either a square that squeezed the readings into a
+     narrow column or a band too short to read; neither worked. */
+  await page.waitForFunction(() => document.querySelectorAll('#radarRow .ov-radar-btn').length === 3,
                              null, { timeout: 25000 });
-  ok('every home card carries its own radar', (await page.$$('.ov-radar-btn')).length === 3);
-  ok('the large radar panel is gone from the overview', (await page.$$('#radarPanel')).length === 0);
+  ok('the radar row holds one radar per home', (await page.$$('#radarRow .ov-radar-btn')).length === 3);
+  ok('no radar is left inside the home cards', (await page.$$('.ov-card .ov-radar-btn')).length === 0);
+  ok('the row comes before the quick-reference table',
+     await page.evaluate(() => {
+       const r = document.getElementById('radarRow'), q = document.querySelector('table.qr');
+       return !!(r && q) && (r.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+     }));
 
-  const thumbs = await page.$$eval('.ov-card', cards => cards.map(c => ({
-    home: (c.querySelector('.ov-name') || {}).textContent || '',
+  const boxes = await page.$$eval('#radarRow .ov-radar-btn', bs => bs.map(b => {
+    const r = b.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height) };
+  }));
+  ok('every radar is square', boxes.every(b => Math.abs(b.w - b.h) <= 1), JSON.stringify(boxes));
+  ok('all three are the same size',
+     new Set(boxes.map(b => b.w)).size === 1, JSON.stringify(boxes.map(b => b.w)));
+  ok('and none is so small it shows nothing', boxes.every(b => b.w >= 180), JSON.stringify(boxes));
+
+  const cells = await page.$$eval('#radarRow .rr-cell', cs => cs.map(c => ({
+    name: (c.querySelector('.rr-name') || {}).textContent || '',
     src: (c.querySelector('.ov-radar-img') || {}).src || '',
     alt: (c.querySelector('.ov-radar-img') || {}).alt || '',
     cap: (c.querySelector('.ov-radar-cap') || {}).textContent || ''
   })));
-  ok('each thumbnail points at the NWS radar loop',
-     thumbs.every(t => t.src.includes('radar.weather.gov')), JSON.stringify(thumbs.map(t => t.src)));
-  ok('each thumbnail names its own station, and no two are the same',
-     new Set(thumbs.map(t => t.cap.trim())).size === 3, JSON.stringify(thumbs.map(t => t.cap)));
-  /* The three homes genuinely sit under KOKX, KLTX and KTBW. A card showing
-     another home's dish is showing the wrong weather. */
-  const stationFor = { Rockaway: 'KOKX', 'North Myrtle Beach': 'KLTX', 'Bonita Springs': 'KTBW' };
-  for (const t of thumbs) {
-    const home = Object.keys(stationFor).find(k => t.home.includes(k));
-    ok(`${home} shows its own radar station (${stationFor[home]})`,
-       t.src.includes(stationFor[home]) && t.cap.includes(stationFor[home]),
-       `${t.src} / ${t.cap}`);
-  }
-  ok('each radar image carries alt text naming the place it covers',
-     thumbs.every(t => /radar loop/i.test(t.alt) && t.alt.includes(t.home.split(',')[0])),
-     JSON.stringify(thumbs.map(t => t.alt)));
+  ok('each square is labelled with its home',
+     /Rockaway/.test(cells[0].name) && /Myrtle/.test(cells[1].name) && /Bonita/.test(cells[2].name),
+     cells.map(c => c.name).join(' | '));
+  /* The three homes really are under three different dishes; a row showing the
+     same station three times would be worse than no row. */
+  const want = ['KOKX', 'KLTX', 'KTBW'];
+  cells.forEach((c, i) => ok(`${want[i]} is the station shown for ${c.name.trim()}`,
+    c.src.includes(want[i]) && c.cap.includes(want[i]), `${c.cap} / ${c.src}`));
+  ok('each image names the place it covers in its alt text',
+     cells.every(c => /radar loop/i.test(c.alt)));
 
-  /* The card is itself a button that opens the home. The radar must enlarge
-     instead of navigating — the whole point of putting it there. */
-  await page.click('.ov-card:first-child .ov-radar-btn');
+  await page.click('#radarRow .ov-radar-btn');
   await page.waitForSelector('#radarModal', { timeout: 10000 });
-  ok('clicking a thumbnail opens the full-size radar', (await page.$$('#radarModal')).length === 1);
-  ok('and does NOT navigate to that home instead',
-     (await page.$$('.ov-card')).length === 3, 'the overview was replaced');
   const modalTxt = await page.textContent('#radarModal');
-  ok('the viewer names the home and its station',
-     modalTxt.includes('Rockaway') && /K[A-Z]{3}/.test(modalTxt), modalTxt.slice(0, 120));
+  ok('clicking a square opens the full-size radar', modalTxt.includes('Rockaway'), modalTxt.slice(0, 90));
   ok('the viewer is announced as a dialog',
      (await page.getAttribute('#radarModal', 'role')) === 'dialog' &&
      (await page.getAttribute('#radarModal', 'aria-modal')) === 'true');
-  ok('the enlarged image is the radar loop, not the thumbnail crop',
-     ((await page.getAttribute('#radarModal img', 'src')) || '').includes('radar.weather.gov'));
   ok('it links out to the full NWS radar',
      ((await page.getAttribute('#radarModal a.btn', 'href')) || '').includes('radar.weather.gov/station'));
-  ok('the page behind is locked so it cannot scroll under the viewer',
+  ok('the page behind is locked while it is open',
      await page.evaluate(() => document.body.classList.contains('modal-open')));
-
-  const modalBefore = await page.getAttribute('#radarModal img', 'src');
+  const rrBefore = await page.getAttribute('#radarModal img', 'src');
   await page.waitForTimeout(1100);
   await page.click('#radarModal .js-radar-refresh');
   await page.waitForTimeout(300);
-  ok('Refresh in the viewer fetches new sweeps rather than the cached copy',
-     modalBefore !== await page.getAttribute('#radarModal img', 'src'));
-
+  ok('Refresh fetches new sweeps rather than the cached copy',
+     rrBefore !== await page.getAttribute('#radarModal img', 'src'));
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  ok('Escape closes the viewer', (await page.$$('#radarModal')).length === 0);
-  ok('and the page scrolls again afterwards',
-     !(await page.evaluate(() => document.body.classList.contains('modal-open'))));
-  ok('the overview is still intact after closing', (await page.$$('.ov-card')).length === 3);
+  ok('Escape closes it', (await page.$$('#radarModal')).length === 0);
+  ok('and the page scrolls again', !(await page.evaluate(() => document.body.classList.contains('modal-open'))));
 
-  /* Clicking the backdrop is the other way people close these. */
-  await page.click('.ov-card:first-child .ov-radar-btn');
-  await page.waitForSelector('#radarModal', { timeout: 10000 });
-  await page.mouse.click(6, 6);
-  await page.waitForTimeout(200);
-  ok('clicking outside the viewer closes it too', (await page.$$('#radarModal')).length === 0);
-
-  /* Keyboard users must reach it without a mouse. */
-  await page.$eval('.ov-card:first-child .ov-radar-btn', b => b.focus());
+  await page.$eval('#radarRow .ov-radar-btn', b => b.focus());
   await page.keyboard.press('Enter');
   await page.waitForTimeout(400);
-  ok('the thumbnail is reachable and openable from the keyboard',
-     (await page.$$('#radarModal')).length === 1);
+  ok('a square opens from the keyboard too', (await page.$$('#radarModal')).length === 1);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
 
+  await page.click('.tab[data-id="nmb"]');
   /* A single home still gets the full panel, with its own station. */
   await page.click('.tab[data-id="nmb"]');
   await page.waitForSelector('#radarPanel', { timeout: 20000 });

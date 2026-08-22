@@ -668,6 +668,31 @@ function renderRadar(host, locId) {
    weather; a thumbnail per card shows all three at once, and clicking one
    opens it full size.
    ------------------------------------------------------------------------- */
+/* Three radars, one per home, equal size, side by side. They live in their own
+   section rather than inside the cards: squeezed into a card the loop had to be
+   either a square that pushed the readings into a narrow column, or a band so
+   short it showed nothing. At full width all three are the same size and big
+   enough to read, and comparing them across the three homes — which is the
+   only reason to show three at once — actually works. */
+function renderRadarRow(host) {
+  const p = el('section', 'panel');
+  p.id = 'radarRow';
+  p.innerHTML = `
+    <div class="panel-h"><h2>📡 Live radar</h2>
+      <span class="note">Last ten sweeps at each home · click one to enlarge</span></div>
+    <div class="panel-b">
+      <div class="rr-grid">${LOCATIONS.map(l => `
+        <div class="rr-cell">
+          <div class="rr-name">${l.emoji} ${esc(l.short)}, ${l.state}</div>
+          <div class="rr-slot js-rr-slot" data-loc="${l.id}"></div>
+        </div>`).join('')}</div>
+    </div>`;
+  host.appendChild(p);
+  p.querySelectorAll('.js-rr-slot').forEach(slot =>
+    mountRadarThumb(slot, loc(slot.dataset.loc)));
+  return p;
+}
+
 function mountRadarThumb(slot, l) {
   if (!slot) return;
   slot.innerHTML = `<div class="ov-radar-ph">radar…</div>`;
@@ -677,10 +702,8 @@ function mountRadarThumb(slot, l) {
       slot.innerHTML = `<div class="ov-radar-ph">no radar</div>`;
       return;
     }
-    /* A wide band rather than a square: the loop is square with the station at
-       its centre, so cropping the top and bottom keeps exactly the part that
-       matters and spends the card's horizontal space instead of leaving a
-       column of white beside a narrow stack of readings. */
+    /* Square, because the loop itself is square with the station at its
+       centre — any other aspect ratio throws away range in one direction. */
     slot.innerHTML = `
       <button type="button" class="ov-radar-btn js-radar-open"
               aria-label="Enlarge the ${esc(st.id)} radar loop covering ${esc(l.name)}">
@@ -758,6 +781,7 @@ function closeRadarViewer() {
    is for going deeper, not for the basics.
    ------------------------------------------------------------------------- */
 function renderOverview(host) {
+  renderRadarRow(host);
   renderQuickReference(host);
 
   /* One card per home. */
@@ -832,33 +856,26 @@ function renderOverview(host) {
           <div class="ov-blurb">${esc(l.blurb)}</div>
         </div>
       </div>
-      <div class="ov-mid">
-        <div class="ov-mid-l">
-          <div class="ov-now">
-            <span class="ov-ico" aria-hidden="true">${w.icon}</span>
-            <span class="ov-temp">${fmtNum(cur.temperature_2m, 0)}°</span>
-            <span class="ov-meta">
-              <span class="ov-cond">${esc(w.label)}</span>
-              <span class="ov-feels">Feels ${fmtNum(cur.apparent_temperature, 0)}°</span>
-            </span>
-          </div>
-          <div class="ov-hilo">
-            <span style="color:${poles.high}">↑ ${fmtNum(daily.temperature_2m_max?.[ti], 0)}°</span>
-            <span style="color:${poles.low}">↓ ${fmtNum(daily.temperature_2m_min?.[ti], 0)}°</span>
-            <span class="ov-pop">${fmtNum(daily.precipitation_probability_max?.[ti], 0)}% rain today</span>
-          </div>
-          <div class="ov-chips">${chips.map(([i, v, t]) =>
-            `<span class="ov-chip" title="${esc(t)}"><span aria-hidden="true">${i}</span> ${esc(v)}</span>`).join('')}</div>
-        </div>
+      <div class="ov-now">
+        <span class="ov-ico" aria-hidden="true">${w.icon}</span>
+        <span class="ov-temp">${fmtNum(cur.temperature_2m, 0)}°</span>
+        <span class="ov-meta">
+          <span class="ov-cond">${esc(w.label)}</span>
+          <span class="ov-feels">Feels ${fmtNum(cur.apparent_temperature, 0)}°</span>
+        </span>
       </div>
-      <div class="ov-radar js-ov-radar"></div>
+      <div class="ov-hilo">
+        <span style="color:${poles.high}">↑ ${fmtNum(daily.temperature_2m_max?.[ti], 0)}°</span>
+        <span style="color:${poles.low}">↓ ${fmtNum(daily.temperature_2m_min?.[ti], 0)}°</span>
+        <span class="ov-pop">${fmtNum(daily.precipitation_probability_max?.[ti], 0)}% rain today</span>
+      </div>
+      <div class="ov-chips">${chips.map(([i, v, t]) =>
+        `<span class="ov-chip" title="${esc(t)}"><span aria-hidden="true">${i}</span> ${esc(v)}</span>`).join('')}</div>
       <div class="ov-sun">🌅 ${esc(fmtMinutes(riseMin))} · 🌇 ${esc(fmtMinutes(setMin))} ·
         ${esc(fmtDuration(sun.daylightMinutes))}${nowMin != null && riseMin != null && setMin != null
           ? ` · ${esc(daylightProgress(nowMin, riseMin, setMin))}` : ''}</div>
       <div class="ov-week">${week}</div>
       <div class="ov-more">Full dashboard for ${esc(l.short)} →</div>`;
-
-    mountRadarThumb(card.querySelector('.js-ov-radar'), l);
 
     const open = () => selectLocation(l.id);
     card.addEventListener('click', open);
