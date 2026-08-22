@@ -1,5 +1,6 @@
 /* Station-observation merge. Run: node test/stations.mjs */
-import { STATIONS, STATION_FIELDS, mergeStationDaily, firstUsableStation } from '../scripts/stations.mjs';
+import { STATIONS, STATION_FIELDS, mergeStationDaily, firstUsableStation,
+         fetchStationDaily } from '../scripts/stations.mjs';
 let pass = 0, fail = 0;
 const ok = (n, c, e = '') => { if (c) { pass++; console.log('  \x1b[32m✓\x1b[0m ' + n); }
   else { fail++; console.log('  \x1b[31m✗\x1b[0m ' + n + (e ? '  → ' + e : '')); } };
@@ -28,8 +29,11 @@ const mkDaily = n => {
   }
   return d;
 };
-const station = (dates, rec) => ({
-  stationId: 'TEST', name: 'Test', coverage: 1,
+/* `reports` says which fields the station instruments. Default to all of them
+   so the existing cases keep meaning what they meant. */
+const station = (dates, rec, reports = { temperature_2m_max: true, temperature_2m_min: true,
+                                          precipitation_sum: true, snowfall_sum: true }) => ({
+  stationId: 'TEST', name: 'Test', coverage: 1, reports,
   byDate: new Map(dates.map(d => [d, { ...rec }]))
 });
 
@@ -83,6 +87,65 @@ const sparse = await firstUsableStation('nmb', '2024-01-01', '2024-12-31', () =>
 ok('a station reporting 8% of days is rejected rather than used', sparse === null,
    sparse ? `accepted ${sparse.stationId}` : '');
 globalThis.fetch = realFetch;
+
+console.log('\n\x1b[1ma blank is not the same as a zero, and neither is the same as no gauge\x1b[0m');
+/* This shipped. GHCN omits SNOW on days nothing fell, so replacing the model's
+   complete snowfall series with the station's blanks published a Rockaway and a
+   Myrtle Beach with NO snowfall at all — the identical defect ERA5-Land caused
+   for precipitation, arrived at the identical way: by assuming an absent value
+   meant something. */
+const d4 = mkDaily(3);
+mergeStationDaily(d4, station(d4.time, {
+  temperature_2m_max: 34, temperature_2m_min: 20, precipitation_sum: null, snowfall_sum: null }));
+ok('a day the station reported, with no snow figure, counts as no snow',
+   d4.snowfall_sum.every(v => v === 0), JSON.stringify(d4.snowfall_sum));
+ok('and no rain figure on a reported day counts as dry',
+   d4.precipitation_sum.every(v => v === 0), JSON.stringify(d4.precipitation_sum));
+ok('but the temperature is still the observed one', d4.temperature_2m_max.every(v => v === 34));
+
+/* A site with no snow gauge is a different case entirely: its blanks mean
+   nothing at all, so the model's series has to survive untouched. */
+const d5 = mkDaily(3);
+const r5 = mergeStationDaily(d5, station(d5.time, {
+  temperature_2m_max: 88, temperature_2m_min: 70, precipitation_sum: 0.2, snowfall_sum: null },
+  { temperature_2m_max: true, temperature_2m_min: true, precipitation_sum: true, snowfall_sum: false }));
+ok('a station with no snow gauge leaves the model snowfall alone',
+   d5.snowfall_sum.every(v => v === 0.0) && d5.snowfall_sum.every(v => v !== null),
+   JSON.stringify(d5.snowfall_sum));
+ok('and that field is reported as left on the model',
+   r5.kept.includes('snowfall_sum') && !r5.fields.includes('snowfall_sum'),
+   `fields=${r5.fields.join(',')} kept=${r5.kept.join(',')}`);
+ok('the fields it does measure are still taken over',
+   r5.fields.includes('precipitation_sum') && d5.precipitation_sum.every(v => v === 0.2));
+
+/* Days the station missed are still missing, not zero — otherwise a quiet
+   station manufactures a drought. */
+const d6 = mkDaily(4);
+mergeStationDaily(d6, station([d6.time[0]], {
+  temperature_2m_max: 34, temperature_2m_min: 20, precipitation_sum: null, snowfall_sum: null }));
+ok('a day with NO station record stays null rather than becoming zero',
+   d6.snowfall_sum[1] === null && d6.precipitation_sum[1] === null,
+   JSON.stringify([d6.snowfall_sum[1], d6.precipitation_sum[1]]));
+ok('while the reported day reads zero', d6.snowfall_sum[0] === 0);
+
+/* And the counting that decides "has a gauge" must not be fooled by one
+   stray reading. */
+console.log('\n\x1b[1mdeciding whether a station has a gauge at all\x1b[0m');
+{
+  const rows = Array.from({ length: 200 }, (_, i) => ({
+    DATE: new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(0, 10),
+    NAME: 'G', TMAX: '70', TMIN: '50', PRCP: '0.1',
+    SNOW: i === 0 ? '2.0' : ''            // exactly one snow reading
+  }));
+  const realFetch2 = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => rows });
+  const st = await fetchStationDaily('X', '2024-01-01', '2024-07-18');
+  globalThis.fetch = realFetch2;
+  ok('one lone snow reading does not count as a snow gauge',
+     st.reports.snowfall_sum === false, `seen ${st.seen.snowfall_sum}`);
+  ok('a field reported every day does count',
+     st.reports.precipitation_sum === true, `seen ${st.seen.precipitation_sum}`);
+}
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

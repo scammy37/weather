@@ -202,10 +202,12 @@ for (const loc of homes) {
             id: st.stationId, name: st.label || st.name, miles: st.miles,
             coverage: +st.coverage.toFixed(3),
             daysObserved: merged.replaced, daysMissing: merged.missing,
-            fields: merged.fields
+            fields: merged.fields, keptOnModel: merged.kept
           };
           log(`  observations: ${merged.replaced.toLocaleString()} days from ${st.stationId}`
             + `, ${merged.missing.toLocaleString()} without a reading`);
+          log(`  from the station: ${merged.fields.join(', ')}`);
+          if (merged.kept.length) log(`  left on the model (station has no gauge): ${merged.kept.join(', ')}`);
         } else {
           log(`  no usable station — temperature and precipitation stay on the model`);
         }

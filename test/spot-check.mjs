@@ -103,6 +103,11 @@ for (const [id, r] of Object.entries(REF)) {
   range('Jan avg low  ', rows[0].avgLow,  fromNoaa(0, 'tmin') || r.janLow, !nm);
   range('Jul avg low  ', rows[6].avgLow,  fromNoaa(6, 'tmin') || r.julLow, !nm);
   range('annual precip', a.annualPrecip,  r.precip);
+  /* An explicit null here means the data went MISSING, which is a different
+     failure from a wrong number and reads as "—" on the page. It shipped once:
+     replacing the model's snowfall with a station's blanks deleted it. */
+  ok(`annual snow   ${a.annualSnow == null ? 'MISSING' : a.annualSnow.toFixed(1)} is present at all`,
+     a.annualSnow != null, 'the snowfall series came back empty');
   range('annual snow  ', a.annualSnow,    r.snow);
   range('days ≤ 32°F  ', a.annualFreeze,  r.freeze);
   /* Threshold counts are the most sensitive to a degree or two of model bias,
