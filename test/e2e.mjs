@@ -590,13 +590,18 @@ async function main() {
        const r = document.getElementById('radarRow'), q = document.querySelector('table.qr');
        return !!(r && q) && r.getBoundingClientRect().top > q.getBoundingClientRect().top;
      }));
-  /* Same visual weight as the block above it, rather than towering over it. */
-  const panelH = await page.evaluate(() => ({
-    radar: Math.round(document.getElementById('radarRow').getBoundingClientRect().height),
-    quick: Math.round(document.querySelector('table.qr').closest('.panel').getBoundingClientRect().height)
-  }));
-  ok('the radar panel is the same height as the quick-reference panel',
-     Math.abs(panelH.radar - panelH.quick) <= 12, JSON.stringify(panelH));
+  /* The three fill the row in equal parts with only a hairline between them,
+     rather than sitting as small squares in wide empty columns. */
+  const fill = await page.evaluate(() => {
+    const grid = document.querySelector('.rr-grid');
+    const bs = [...document.querySelectorAll('#radarRow .ov-radar-btn')].map(b => b.getBoundingClientRect());
+    const gaps = [bs[1].left - bs[0].right, bs[2].left - bs[1].right];
+    return { gridW: Math.round(grid.getBoundingClientRect().width),
+             covered: Math.round(bs.reduce((s, r) => s + r.width, 0)), gaps: gaps.map(Math.round) };
+  });
+  ok('the radars span the row rather than floating in empty columns',
+     fill.covered / fill.gridW > 0.95, JSON.stringify(fill));
+  ok('with only a hairline between them', fill.gaps.every(g => g <= 10), JSON.stringify(fill.gaps));
 
   const readBoxes = pg => pg.$$eval('#radarRow .ov-radar-btn', bs => bs.map(b => {
     const r = b.getBoundingClientRect();

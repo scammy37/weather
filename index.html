@@ -199,20 +199,18 @@
      them below 1080px, so anyone whose window was not near-maximised saw three
      radars on top of each other instead of side by side. They only stack on a
      phone, where three across would be 100px each. */
-  .rr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .rr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
   /* Square and label centred in the column. Left-aligned, a 140px square in a
      440px column reads as three things pushed to one side rather than three
      things arranged. */
-  .rr-cell { display:flex; flex-direction:column; gap:7px; min-width:0; align-items:center; }
+  .rr-cell { display:flex; flex-direction:column; gap:5px; min-width:0; }
   .rr-name {
-    font-size:.78rem; font-weight:700; color:var(--ink2); text-align:center;
+    font-size:.78rem; font-weight:700; color:var(--ink2);
     max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  /* Sized so this panel is the same height as the quick-reference panel above
-     it — 140px of square plus 108px of heading, label and padding comes to the
-     247px that block occupies. An uncapped square is 405px, which is more
-     radar than the rest of the section put together. */
-  .rr-slot { width:100%; max-width:140px; }
+  /* No cap: the three fill the row in equal parts with only a hairline between
+     them. */
+  .rr-slot { width:100%; }
   .ov-radar-btn {
     display:block; width:100%; aspect-ratio:1/1; padding:0; overflow:hidden; position:relative;
     border:1px solid var(--border); border-radius:11px; background:var(--surface2);
@@ -220,7 +218,10 @@
   }
   .ov-radar-btn:hover { border-color:var(--accent); }
   .ov-radar-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  .ov-radar-img { width:100%; height:100%; object-fit:cover; display:block; }
+  /* The NWS loop carries a wide empty margin around the sweep, which is most of
+     the dead black area. Scaling past the frame crops that margin off instead
+     of framing it. */
+  .ov-radar-img { width:100%; height:100%; object-fit:cover; display:block; transform:scale(1.16); }
   .ov-radar-cap {
     position:absolute; left:8px; bottom:8px; padding:2px 7px; border-radius:6px;
     background:rgba(0,0,0,.6); color:#fff; font-size:.66rem; font-weight:700; letter-spacing:.03em;
@@ -539,13 +540,13 @@
   <span id="footMeta"></span>
 </footer>
 
-<script src="js/config.js?v=ac53a932a9"></script>
-<script src="js/units.js?v=ac53a932a9"></script>
-<script src="js/solar.js?v=ac53a932a9"></script>
-<script src="js/api.js?v=ac53a932a9"></script>
-<script src="js/climate.js?v=ac53a932a9"></script>
-<script src="js/charts.js?v=ac53a932a9"></script>
-<script src="js/app.js?v=ac53a932a9"></script>
+<script src="js/config.js?v=b1317a0a03"></script>
+<script src="js/units.js?v=b1317a0a03"></script>
+<script src="js/solar.js?v=b1317a0a03"></script>
+<script src="js/api.js?v=b1317a0a03"></script>
+<script src="js/climate.js?v=b1317a0a03"></script>
+<script src="js/charts.js?v=b1317a0a03"></script>
+<script src="js/app.js?v=b1317a0a03"></script>
 <script>
   /* Progressive install + offline shell. Skipped on file:// where service
      workers are not permitted, and non-fatal if registration is refused. */
