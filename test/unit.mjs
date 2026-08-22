@@ -353,5 +353,100 @@ ok('an unsupported extended set leaves the core climatology intact',
 ok('and it is reported as not extended, rather than pretending', res.extended === false);
 globalThis.fetch = realFetch;
 
+/* ---------------------------------------------------------------------------
+   The last few functions no suite had ever executed. Found by unioning V8
+   coverage across the crawl and the e2e run (test/coverage-report.mjs) rather
+   than by reading the code and deciding what looked risky — which is how they
+   stayed uncovered in the first place.
+   ------------------------------------------------------------------------- */
+console.log('\n\x1b[1mcivil twilight\x1b[0m');
+/* Sun 6° below the horizon: first and last usable light. Not currently shown
+   on the page, but exported, so it is either correct or a trap for later. */
+const jun = new Date(Date.UTC(2024, 5, 21));
+const ct = solar.civilTwilight(jun, 33.816, -78.68);
+const st = solar.sunTimes(jun, 33.816, -78.68);
+ok('dawn comes before sunrise', ct.dawn < st.sunrise,
+   `${ct.dawn && ct.dawn.toISOString()} vs ${st.sunrise && st.sunrise.toISOString()}`);
+ok('dusk comes after sunset', ct.dusk > st.sunset,
+   `${ct.dusk && ct.dusk.toISOString()} vs ${st.sunset && st.sunset.toISOString()}`);
+/* At this latitude in June the gap is around half an hour either side; well
+   outside 10-60 minutes would mean the 96° zenith argument is not landing. */
+const dawnGap = (st.sunrise - ct.dawn) / 60000, duskGap = (ct.dusk - st.sunset) / 60000;
+ok('dawn precedes sunrise by a plausible margin', dawnGap > 15 && dawnGap < 60, `${dawnGap.toFixed(1)} min`);
+ok('dusk follows sunset by a plausible margin', duskGap > 15 && duskGap < 60, `${duskGap.toFixed(1)} min`);
+ok('the twilight window is symmetric to within a minute',
+   Math.abs(dawnGap - duskGap) < 1.5, `${dawnGap.toFixed(1)} vs ${duskGap.toFixed(1)}`);
+/* Further north the sun sets more obliquely, so twilight lasts longer. */
+const ctN = solar.civilTwilight(jun, 61.2, -149.9);   // Anchorage
+const stN = solar.sunTimes(jun, 61.2, -149.9);
+ok('twilight is longer at high latitude in June',
+   (stN.sunrise - ctN.dawn) / 60000 > dawnGap,
+   `${((stN.sunrise - ctN.dawn) / 60000).toFixed(1)} vs ${dawnGap.toFixed(1)}`);
+
+console.log('\n\x1b[1mrequest pacing\x1b[0m');
+/* Pacing is what keeps a full rebuild inside the free tier's per-minute cap.
+   It is set by the build scripts, so no browser test ever touched it — and a
+   silently-ignored pace is exactly the bug that made a 30-minute build attempt
+   to run in 5. */
+globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: 1 }) });
+const timeFour = async () => {
+  const t0 = Date.now();
+  for (let i = 0; i < 4; i++) await api2.apiGet('https://example.invalid/x' + i, { label: 'pace' });
+  return Date.now() - t0;
+};
+api2.setPacing(0);
+const unpaced = await timeFour();
+api2.setPacing(120);
+const paced = await timeFour();
+api2.setPacing(0);
+ok('with no pacing four requests return essentially immediately',
+   unpaced < 100, `${unpaced} ms`);
+ok('a 120 ms pace actually spaces the requests out',
+   paced >= 330, `${paced} ms for 4 requests — pacing is being ignored`);
+ok('and pacing can be turned back off', (await timeFour()) < 100);
+ok('a negative pace is clamped rather than breaking the loop',
+   (api2.setPacing(-500), (await timeFour()) < 100));
+
+console.log('\n\x1b[1mhourly sea-surface temperature collapsed to days\x1b[0m');
+/* The marine API does not document daily SST for every model, so the hourly
+   form is the fallback. If this reduction is wrong the entire ocean-temperature
+   chart is wrong, and nothing else in the suite ran it. */
+const hourly = { hourly: { time: [], sea_surface_temperature: [], wave_height: [] } };
+for (let h = 0; h < 24; h++) {
+  hourly.hourly.time.push(`2024-07-01T${String(h).padStart(2, '0')}:00`);
+  hourly.hourly.sea_surface_temperature.push(70 + h);   // 70..93, mean 81.5
+  hourly.hourly.wave_height.push(2);
+}
+for (let h = 0; h < 24; h++) {
+  hourly.hourly.time.push(`2024-07-02T${String(h).padStart(2, '0')}:00`);
+  hourly.hourly.sea_surface_temperature.push(h < 12 ? null : 80);
+  hourly.hourly.wave_height.push(3);
+}
+const days = api2.hourlyToDaily(hourly);
+ok('one row per calendar day', days.length === 2, `${days.length} rows`);
+eq('the daily mean is the mean of that day\'s hours', days[0].mean, 81.5);
+eq('the daily max is that day\'s highest hour', days[0].max, 93);
+eq('the daily min is that day\'s lowest hour', days[0].min, 70);
+ok('days are keyed by date, not by index', days[0].date === '2024-07-01' && days[1].date === '2024-07-02');
+eq('null hours are skipped rather than counted as zero', days[1].mean, 80);
+ok('and they do not drag the minimum to zero', days[1].min === 80, String(days[1].min));
+eq('wave height falls back to the hourly mean when no daily max is given', days[0].wave, 2);
+/* A daily wave_height_max, where present, must win over the hourly mean. */
+const withDaily = JSON.parse(JSON.stringify(hourly));
+withDaily.daily = { time: ['2024-07-01'], wave_height_max: [9] };
+const days2 = api2.hourlyToDaily(withDaily);
+eq('a reported daily wave max takes precedence over the hourly mean', days2[0].wave, 9);
+eq('and a day without one still falls back', days2[1].wave, 3);
+/* A day where every hour is missing must report null, not a temperature of
+   -Infinity from an unseeded max. */
+const allNull = { hourly: { time: ['2024-08-01T00:00', '2024-08-01T01:00'],
+                            sea_surface_temperature: [null, null], wave_height: [null, null] } };
+const dn = api2.hourlyToDaily(allNull);
+ok('a day with no readings reports null, not Infinity',
+   dn[0].mean === null && dn[0].max === null && dn[0].min === null,
+   JSON.stringify(dn[0]));
+ok('an empty response yields no rows rather than throwing',
+   api2.hourlyToDaily({}).length === 0);
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

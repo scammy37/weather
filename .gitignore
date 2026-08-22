@@ -3,3 +3,5 @@ package-lock.json
 package.json
 test/shots/
 .DS_Store
+test/shots/nodecov/
+test/shots/coverage-*.json

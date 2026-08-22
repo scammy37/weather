@@ -94,6 +94,35 @@ async function main() {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({ headless: !args.includes('--headed') });
+
+  /* --coverage records which app functions this suite actually executes, across
+     EVERY context it opens, not just the main one. A pass count says nothing
+     about what was never run; this does. Contexts get closed mid-suite, so
+     coverage is harvested on close rather than at the end. */
+  const COVERAGE = args.includes('--coverage');
+  const covEntries = [];
+  if (COVERAGE) {
+    const realNewContext = browser.newContext.bind(browser);
+    browser.newContext = async (...a) => {
+      const c = await realNewContext(...a);
+      const realNewPage = c.newPage.bind(c);
+      const pages = [];
+      c.newPage = async (...b) => {
+        const pg = await realNewPage(...b);
+        await pg.coverage.startJSCoverage({ resetOnNavigation: false });
+        pages.push(pg);
+        return pg;
+      };
+      const realClose = c.close.bind(c);
+      c.close = async (...b) => {
+        for (const pg of pages) {
+          try { covEntries.push(...await pg.coverage.stopJSCoverage()); } catch (_) {}
+        }
+        return realClose(...b);
+      };
+      return c;
+    };
+  }
   const page = await (await browser.newContext(CTX)).newPage();
 
   const consoleErrors = [];
@@ -867,6 +896,71 @@ async function main() {
      /not available in this deployment/.test(nvDiag), nvDiag.slice(0, 200));
   await nvCtx.close();
 
+  /* ------------------------------------------------------------------
+     Charts with nothing to draw. Every chart function has an early exit that
+     paints "No data available" instead of an empty frame or a crash, and
+     coverage showed not one of those exits had ever run. A month with a
+     genuinely null metric — snowfall in Florida, ocean temperature inland —
+     is not hypothetical, so this is a path real data reaches.
+     ------------------------------------------------------------------ */
+  console.log('\n\x1b[1m24. Charts with no data to draw\x1b[0m');
+  const emptyResults = await page.evaluate(() => {
+    const out = [];
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const host = document.createElement('div');
+    host.style.width = '600px';
+    document.body.appendChild(host);
+    const fresh = () => {
+      const el = document.createElementNS(svgNS, 'svg');
+      host.appendChild(el);
+      return el;
+    };
+    const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const nulls = labels.map(() => null);
+    const cases = {
+      barChart:       () => barChart(fresh(), { values: nulls, labels, color: '#333' }),
+      rangeChart:     () => rangeChart(fresh(), { high: nulls, low: nulls, labels }),
+      multiLine:      () => multiLine(fresh(), { series: [{ label: 'a', color: '#333', values: nulls }], labels }),
+      stackedBar:     () => stackedBar(fresh(), { stacks: labels.map(() => [0, 0]), labels,
+                                                  seriesLabels: ['a','b'], ramp: ['#333','#666'] }),
+      daylightRibbon: () => daylightRibbon(fresh(), { curve: [] }),
+      trendChart:     () => trendChart(fresh(), { years: [], values: [], trend: null, color: '#333' }),
+      hourlyChart:    () => hourlyChart(fresh(), { times: [], values: [], isDayFlags: [], color: '#333' })
+    };
+    for (const [name, run] of Object.entries(cases)) {
+      try {
+        run();
+        const el = host.lastChild;
+        out.push({ name, threw: null, text: el.textContent,
+                   w: el.getAttribute('width'), h: el.getAttribute('height'),
+                   marks: el.querySelectorAll('.mark').length });
+      } catch (err) {
+        out.push({ name, threw: String(err && err.message || err) });
+      }
+    }
+    /* sparkLine returns a string rather than drawing into an element. */
+    out.push({ name: 'sparkLine', threw: null, text: sparkLine([], '#333'), spark: true });
+    out.push({ name: 'sparkLineOne', threw: null, text: sparkLine([5], '#333'), spark: true });
+    host.remove();
+    return out;
+  });
+
+  for (const r of emptyResults.filter(r => !r.spark)) {
+    ok(`${r.name} does not throw on empty data`, r.threw === null, r.threw || '');
+    ok(`${r.name} says "No data available" rather than drawing an empty frame`,
+       (r.text || '').includes('No data available'), JSON.stringify(r.text || '').slice(0, 80));
+    ok(`${r.name} draws no marks that would tooltip a non-existent value`,
+       r.marks === 0, `${r.marks} marks`);
+    ok(`${r.name} still sizes its canvas, so the layout does not collapse`,
+       r.w && r.h && +r.w > 0 && +r.h > 0, `${r.w}x${r.h}`);
+  }
+  const spark0 = emptyResults.find(r => r.name === 'sparkLine');
+  const spark1 = emptyResults.find(r => r.name === 'sparkLineOne');
+  ok('sparkLine returns nothing at all for no data, rather than a flat line',
+     spark0.text === '', JSON.stringify(spark0.text).slice(0, 60));
+  ok('and a single point is not drawn as a trend either',
+     spark1.text === '', JSON.stringify(spark1.text).slice(0, 60));
+
   console.log('\n\x1b[1m23. Console health\x1b[0m');
   const realErrors = consoleErrors.filter(e => !/Failed to load resource|net::ERR/.test(e));
   ok('no uncaught JavaScript errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
@@ -877,6 +971,10 @@ async function main() {
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: path.join(SHOTS, '02-top.png') });
 
+  if (COVERAGE) {
+    for (const c of browser.contexts()) { try { await c.close(); } catch (_) {} }
+    writeCoverage(covEntries);
+  }
   await browser.close();
   server.close();
 
@@ -888,3 +986,14 @@ async function main() {
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
+
+
+/* Dump the raw V8 ranges so they can be unioned with the crawl's. The question
+   worth answering is what NO suite touched, not what each one missed. */
+function writeCoverage(entries) {
+  const out = path.join(SHOTS, 'coverage-e2e.json');
+  fs.writeFileSync(out, JSON.stringify(entries.map(e => ({
+    url: e.url, functions: e.functions.map(f => ({ ranges: f.ranges }))
+  }))));
+  console.log(`Coverage ranges written to ${out}`);
+}

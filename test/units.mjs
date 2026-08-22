@@ -89,5 +89,36 @@ for (const [v, from] of [[1234, 'm'], [42, 'km'], [98765, 'ft']]) {
   eq(`${v} ${from}: miles and feet agree`, mi * 5280, ft, Math.abs(ft) * 1e-9);
 }
 
+console.log('\n\x1b[1man unrecognised unit refuses rather than guessing\x1b[0m');
+/* This is the whole point of the unit layer: a converter that guesses turns a
+   wrong unit into a plausible-looking number on a stat tile, where nobody can
+   see it is wrong. The refusal path had never been executed by any test. */
+const before = u.UNIT_WARNINGS.length;
+ok('an unknown length unit returns null, not a number',
+   u.toMiles(5, 'furlongs', 'visibility') === null, String(u.toMiles(5, 'furlongs')));
+ok('an unknown speed unit returns null', u.toMph(5, 'knots-ish') === null);
+ok('an unknown pressure unit returns null', u.toInHg(1000, 'torr') === null);
+ok('an unknown precipitation unit returns null', u.toInches(5, 'buckets') === null);
+ok('an unknown temperature unit returns null, not a Celsius guess',
+   u.toFahrenheit(20, 'degR') === null, String(u.toFahrenheit(20, 'degR')));
+ok('a null unit is refused too, rather than assumed metric',
+   u.toMiles(5, null) === null && u.toFahrenheit(20, undefined) === null);
+ok('each refusal is recorded so it can surface in the diagnostics panel',
+   u.UNIT_WARNINGS.length > before, `${u.UNIT_WARNINGS.length} vs ${before}`);
+ok('the warning names the unit it did not recognise',
+   u.UNIT_WARNINGS.some(w => w.includes('furlongs')), u.UNIT_WARNINGS.slice(-3).join(' | '));
+ok('and the context, so the offending field is identifiable',
+   u.UNIT_WARNINGS.some(w => w.includes('visibility')), u.UNIT_WARNINGS.slice(-3).join(' | '));
+const dupBefore = u.UNIT_WARNINGS.length;
+u.toMiles(9, 'furlongs', 'visibility');
+ok('the same warning is not repeated on every call',
+   u.UNIT_WARNINGS.length === dupBefore, `${u.UNIT_WARNINGS.length} vs ${dupBefore}`);
+ok('a value that is not a number is refused before the unit is even considered',
+   u.toMiles(null, 'm') === null && u.toMiles(NaN, 'm') === null && u.toFahrenheit('20', '°C') === null);
+/* A known unit must still work after all that — the refusals must not have
+   poisoned the tables. */
+ok('a known unit still converts correctly afterwards',
+   Math.abs(u.toMiles(1609.344, 'm') - 1) < 1e-9, String(u.toMiles(1609.344, 'm')));
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

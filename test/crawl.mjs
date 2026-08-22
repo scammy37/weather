@@ -35,9 +35,14 @@ const base = `http://127.0.0.1:${srv.address().port}`;
 const browser = await chromium.launch();
 const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
 
+/* --coverage records which functions in the app actually execute during the
+   crawl, and prints the ones that never do. A suite's blind spots are not
+   visible from its pass count; this makes them mechanical instead of a guess. */
+const COVERAGE = process.argv.includes('--coverage');
 const jsErrors = [];
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
 const p = await ctx.newPage();
+if (COVERAGE) await p.coverage.startJSCoverage({ resetOnNavigation: false });
 p.on('pageerror', e => jsErrors.push(e.message));
 p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) jsErrors.push('console: ' + m.text()); });
 const json = (rt, body) => rt.fulfill({ status: 200, contentType: 'application/json',
@@ -263,6 +268,15 @@ if (clearBtn) {
   await checkState('after clearing the cache');
 }
 
+if (COVERAGE) {
+  const entries = await p.coverage.stopJSCoverage();
+  const out = path.join(ROOT, 'test', 'shots', 'coverage-crawl.json');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, JSON.stringify(entries.map(e => ({
+    url: e.url, functions: e.functions.map(f => ({ ranges: f.ranges })) }))));
+  reportCoverage(entries);
+  console.log(`Coverage ranges written to ${out}`);
+}
 await browser.close(); srv.close();
 console.log(`\n\x1b[1m${pass} checks passed, ${fail} failed\x1b[0m`);
 if (problems.length) {
@@ -271,3 +285,43 @@ if (problems.length) {
 }
 console.log();
 process.exit(fail ? 1 : 0);
+
+
+/* Map V8's byte ranges back onto declared functions, and name the ones the
+   crawl never entered. Not a percentage — a list, because the useful question
+   is "which code did nobody look at", not "what number did we score". */
+function reportCoverage(entries) {
+  const FN = /(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+  console.log('\n\x1b[1mcode the crawl never executed\x1b[0m');
+  let totalFns = 0, missed = 0;
+  for (const e of entries) {
+    const file = (e.url || '').split('/').pop().split('?')[0];
+    if (!/^(app|api|charts|climate|solar|units|config)\.js$/.test(file)) continue;
+    const src = e.source || fs.readFileSync(path.join(ROOT, 'js', file), 'utf8');
+    /* A byte offset is covered if any range containing it has count > 0. */
+    const ranges = [];
+    for (const f of e.functions) for (const r of f.ranges) ranges.push(r);
+    const covered = off => {
+      let best = null;
+      for (const r of ranges) {
+        if (off >= r.startOffset && off < r.endOffset &&
+            (!best || (r.endOffset - r.startOffset) < (best.endOffset - best.startOffset))) best = r;
+      }
+      return best ? best.count > 0 : false;
+    };
+    const cold = [];
+    let m;
+    FN.lastIndex = 0;
+    while ((m = FN.exec(src))) {
+      totalFns++;
+      /* Probe a byte just inside the body rather than at the declaration:
+         the declaration is covered simply by the file being parsed. */
+      const bodyAt = src.indexOf('{', m.index + m[0].length - 1);
+      if (bodyAt < 0) continue;
+      if (!covered(bodyAt + 1)) { cold.push(m[1]); missed++; }
+    }
+    if (cold.length) console.log(`  \x1b[33m${file}\x1b[0m  ${cold.length} never entered: ${cold.join(', ')}`);
+    else console.log(`  \x1b[32m${file}\x1b[0m  every declared function ran`);
+  }
+  console.log(`  ${totalFns - missed}/${totalFns} declared functions executed`);
+}

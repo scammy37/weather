@@ -187,7 +187,14 @@ function rangeChart(svg, opts) {
   const PAD = { l: padAxis, r: 14, t: 34, b: 26 };
   const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
   const all = [...high, ...low, ...(extra ? extra.values : [])].filter(nn);
-  if (!all.length) { svg.innerHTML = emptyNote(W, H); return; }
+  /* Sized like every other empty chart: without width and height the SVG
+     collapses to nothing and the "No data available" note is invisible, so a
+     missing series looks like a missing chart. */
+  if (!all.length) {
+    svg.setAttribute('width', W); svg.setAttribute('height', H);
+    svg.innerHTML = emptyNote(W, H);
+    return;
+  }
   const scale = niceTicks(Math.min(...all), Math.max(...all), 5);
   const yOf = v => PAD.t + plotH - ((v - scale.min) / (scale.max - scale.min || 1)) * plotH;
   const step = plotW / labels.length, xCenter = i => PAD.l + step * i + step / 2;

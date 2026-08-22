@@ -27,9 +27,6 @@ jobs:
       # leap years, partial-month guards, null-safety. No network and no
       # browser, so this stays fast and deterministic.
       #
-      # test/e2e.mjs is deliberately not run here: it needs a Playwright
-      # browser download, which would add minutes to every push. Run it
-      # locally with `node test/e2e.mjs`.
       - run: node test/globals.mjs        # no cross-file global collisions
       - run: node test/units.mjs          # every conversion factor
       - run: node test/unit.mjs           # climatology maths
@@ -43,6 +40,13 @@ jobs:
         run: node test/e2e.mjs
       - name: Rendered-value audit
         run: node test/audit.mjs
+
+      # Which functions did NO suite execute? A pass count says how much of
+      # what a suite looked at worked; it says nothing about what it never
+      # looked at. This fails if any function goes untested, which is what
+      # stops the number sliding back down one exception at a time.
+      - name: Coverage — every function must be executed by some test
+        run: ./test/run-coverage.sh
 
       - name: Spot-check the committed data
         # Non-blocking here: the data can legitimately lag the code between
