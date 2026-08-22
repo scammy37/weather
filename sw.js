@@ -8,16 +8,18 @@
        conditions must never be served stale — a cached "72°F" from yesterday is
        worse than an honest error.
 */
-/* Bump on any change to the shell list below. */
-const CACHE = 'weather-v2';
+/* Both the cache name and the ?v= stamps below are written by
+   scripts/stamp-assets.mjs from a hash of the shell's contents. Do not edit
+   them by hand; test/globals.mjs fails if they are stale. */
+const CACHE = 'weather-3d70fa5d1c';
 
 /* Must list every script index.html loads. test/globals.mjs asserts this:
    js/units.js was missing here once, which would have broken the installed
    app offline while working perfectly online. */
 const SHELL = [
   './', './index.html', './manifest.json', './icon.svg',
-  './js/config.js', './js/units.js', './js/solar.js', './js/api.js',
-  './js/climate.js', './js/charts.js', './js/app.js'
+  './js/config.js?v=3d70fa5d1c', './js/units.js?v=3d70fa5d1c', './js/solar.js?v=3d70fa5d1c', './js/api.js?v=3d70fa5d1c',
+  './js/climate.js?v=3d70fa5d1c', './js/charts.js?v=3d70fa5d1c', './js/app.js?v=3d70fa5d1c'
 ];
 
 /* Best-effort extras: nice to have offline, but their absence must not stop
@@ -47,7 +49,11 @@ self.addEventListener('fetch', e => {
   if (url.hostname.endsWith('open-meteo.com')) return;   // always live
 
   e.respondWith(
-    fetch(e.request)
+    /* cache: 'reload' bypasses the browser's HTTP cache on the way out. Without
+       it "network-first" is a lie: GitHub Pages sends max-age=600, so this
+       fetch could be answered from the browser's own cache and the worker
+       would happily store and serve code that is ten minutes stale. */
+    fetch(e.request, url.origin === self.location.origin ? { cache: 'reload' } : undefined)
       .then(res => {
         if (res && res.ok && url.origin === self.location.origin) {
           const copy = res.clone();

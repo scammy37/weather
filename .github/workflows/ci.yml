@@ -27,7 +27,7 @@ jobs:
       # leap years, partial-month guards, null-safety. No network and no
       # browser, so this stays fast and deterministic.
       #
-      - run: node test/globals.mjs        # no cross-file global collisions
+      - run: node test/globals.mjs        # global collisions + cache-busting stamps
       - run: node test/units.mjs          # every conversion factor
       - run: node test/unit.mjs           # climatology maths
       - run: node test/build-script.mjs   # precompute + quota maths

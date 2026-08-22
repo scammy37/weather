@@ -5,7 +5,8 @@
    file loading entirely — the page then fails at runtime with a confusing
    "X is not defined" far from the actual cause. This exact bug shipped once.
    Run: node test/globals.mjs */
-import fs from 'fs'; import path from 'path';
+import fs from 'fs';
+import { spawnSync } from 'child_process'; import path from 'path';
 import { fileURLToPath } from 'url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -15,7 +16,7 @@ const ok = (n, c, e = '') => { if (c) { pass++; console.log('  \x1b[32m✓\x1b[0
 
 /* The load order index.html actually uses. */
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-const FILES = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map(m => m[1]);
+const FILES = [...html.matchAll(/<script src="(js\/[^"?]+)(?:\?[^"]*)?"><\/script>/g)].map(m => m[1]);
 console.log('\n\x1b[1mscripts loaded by index.html\x1b[0m');
 ok('every js/ file is loaded by the page', FILES.length >= 6, FILES.join(', '));
 console.log('  order: ' + FILES.join(' → '));
@@ -76,16 +77,40 @@ ok('no name is declared in a file the page never loads', orderProblems.length ==
    of bug to find by hand, so it is checked here. */
 console.log('\n\x1b[1mservice worker caches every script the page loads\x1b[0m');
 const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
-const shell = [...sw.matchAll(/'\.\/(js\/[a-z-]+\.js)'/g)].map(m => m[1]);
+/* Strip the ?v= stamp: the comparison is about WHICH scripts are listed,
+   not which build they are from. That is asserted separately below. */
+const shell = [...sw.matchAll(/'\.\/(js\/[a-z-]+\.js)(?:\?[^']*)?'/g)].map(m => m[1]);
 const notCached = FILES.filter(f => !shell.includes(f));
 const stale = shell.filter(f => !FILES.includes(f));
 ok('every loaded script is in the service worker shell', notCached.length === 0, notCached.join(', '));
 ok('the shell lists no script the page no longer loads', stale.length === 0, stale.join(', '));
-ok('the cache version is set', /const CACHE = 'weather-v\d+'/.test(sw),
+ok('the cache version is set', /const CACHE = 'weather-[0-9a-f]{10}'/.test(sw),
    (/const CACHE = '[^']*'/.exec(sw) || [''])[0]);
 ok('index.html and the shell agree exactly',
    shell.slice().sort().join() === FILES.slice().sort().join(),
    `sw: ${shell.join(' ')} | html: ${FILES.join(' ')}`);
+
+console.log('\n\x1b[1mcache-busting stamps are current\x1b[0m');
+/* Without a changing URL, GitHub Pages' max-age=600 lets a browser keep running
+   the previous deploy's code. A stale stamp is therefore a shipped bug that is
+   invisible from the source, so it fails the build rather than waiting to be
+   noticed by someone looking at a page that "didn't change". */
+{
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts/stamp-assets.mjs'), '--check'],
+                      { encoding: 'utf8' });
+  ok('index.html and sw.js carry the current asset hash', r.status === 0,
+     (r.stderr || r.stdout || '').trim().replace(/\n+/g, ' — '));
+}
+const idxRaw = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+ok('every script tag carries a version stamp',
+   [...idxRaw.matchAll(/<script src="(js\/[^"]+)"/g)].every(m => m[1].includes('?v=')),
+   [...idxRaw.matchAll(/<script src="(js\/[^"]+)"/g)].map(m => m[1]).filter(u => !u.includes('?v=')).join(', '));
+const swRaw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+ok('the service worker bypasses the browser HTTP cache for its own origin',
+   /cache: 'reload'/.test(swRaw),
+   'network-first is not network-first if the HTTP cache can answer it');
+ok('the cache name changes with the shell', /const CACHE = 'weather-[0-9a-f]{10}'/.test(swRaw),
+   (swRaw.match(/const CACHE = '[^']*'/) || [''])[0]);
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);
