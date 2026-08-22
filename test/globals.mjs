@@ -71,5 +71,21 @@ for (const name of CALLED) {
 }
 ok('no name is declared in a file the page never loads', orderProblems.length === 0, orderProblems.join('; '));
 
+/* The service worker pre-caches the app shell. A script missing from that list
+   works perfectly online and breaks the installed app offline — the worst kind
+   of bug to find by hand, so it is checked here. */
+console.log('\n\x1b[1mservice worker caches every script the page loads\x1b[0m');
+const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+const shell = [...sw.matchAll(/'\.\/(js\/[a-z-]+\.js)'/g)].map(m => m[1]);
+const notCached = FILES.filter(f => !shell.includes(f));
+const stale = shell.filter(f => !FILES.includes(f));
+ok('every loaded script is in the service worker shell', notCached.length === 0, notCached.join(', '));
+ok('the shell lists no script the page no longer loads', stale.length === 0, stale.join(', '));
+ok('the cache version is set', /const CACHE = 'weather-v\d+'/.test(sw),
+   (/const CACHE = '[^']*'/.exec(sw) || [''])[0]);
+ok('index.html and the shell agree exactly',
+   shell.slice().sort().join() === FILES.slice().sort().join(),
+   `sw: ${shell.join(' ')} | html: ${FILES.join(' ')}`);
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

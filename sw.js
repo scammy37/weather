@@ -8,15 +8,30 @@
        conditions must never be served stale — a cached "72°F" from yesterday is
        worse than an honest error.
 */
-const CACHE = 'weather-v1';
+/* Bump on any change to the shell list below. */
+const CACHE = 'weather-v2';
+
+/* Must list every script index.html loads. test/globals.mjs asserts this:
+   js/units.js was missing here once, which would have broken the installed
+   app offline while working perfectly online. */
 const SHELL = [
   './', './index.html', './manifest.json', './icon.svg',
-  './js/config.js', './js/solar.js', './js/api.js',
+  './js/config.js', './js/units.js', './js/solar.js', './js/api.js',
   './js/climate.js', './js/charts.js', './js/app.js'
 ];
 
+/* Best-effort extras: nice to have offline, but their absence must not stop
+   the shell being cached. */
+const EXTRAS = ['./data/climate.json', './data/validation.json'];
+
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    /* Cached one at a time rather than with addAll: addAll is atomic, so a
+       single 404 would silently leave the whole app uncached. */
+    await Promise.allSettled(SHELL.map(u => c.add(u)));
+    await Promise.allSettled(EXTRAS.map(u => c.add(u)));
+  })().catch(() => {}));
   self.skipWaiting();
 });
 
