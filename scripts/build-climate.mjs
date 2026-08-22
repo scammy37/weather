@@ -36,6 +36,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { firstUsableStation, mergeStationDaily } from './stations.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -187,6 +188,31 @@ for (const loc of homes) {
     try {
       const arch = await api.fetchArchive(loc, period, (done, total, label) =>
         log(`  ${done}/${total} — ${label}`));
+
+      /* Replace the model's thermometer fields with the real thermometer.
+         See scripts/stations.mjs for why: the reanalysis is fine on monthly
+         averages and badly wrong on threshold day counts. */
+      const P = cfg.PERIODS[period];
+      let stationInfo = null;
+      try {
+        const st = await firstUsableStation(loc.id, P.start, P.end, log);
+        if (st) {
+          const merged = mergeStationDaily(arch.daily, st);
+          stationInfo = {
+            id: st.stationId, name: st.label || st.name, miles: st.miles,
+            coverage: +st.coverage.toFixed(3),
+            daysObserved: merged.replaced, daysMissing: merged.missing,
+            fields: merged.fields
+          };
+          log(`  observations: ${merged.replaced.toLocaleString()} days from ${st.stationId}`
+            + `, ${merged.missing.toLocaleString()} without a reading`);
+        } else {
+          log(`  no usable station — temperature and precipitation stay on the model`);
+        }
+      } catch (err) {
+        log(`  station lookup failed (${String(err && err.message || err)}) — staying on the model`);
+      }
+
       const rows = climate.aggregateMonthly(arch.daily, sunClim);
       if (!rows) throw new Error('archive returned no usable daily records');
       if (sstRows.length) climate.mergeSST(rows, sstRows);
@@ -200,6 +226,7 @@ for (const loc of homes) {
           period, locId: loc.id,
           extended: arch.extended,
           model: arch.model, modelNote: arch.modelNote,
+          station: stationInfo,
           sst: sstInfo,
           built: Date.now(),
           elevation: arch.meta && arch.meta.elevation
@@ -210,6 +237,7 @@ for (const loc of homes) {
       log(`  ok — ${days.toLocaleString()} days, model ${arch.model}, extended ${arch.extended}, ${set.years.length} yearly rows`);
       /* Print the numbers most likely to expose a grid-resolution problem, so
          a bad model shows up in the run log rather than only on the page. */
+      log(`     source: ${stationInfo ? `station ${stationInfo.id} for temperature/precip/snow` : 'model only'}`);
       log(`     July high ${rows[6].avgHigh.toFixed(1)}°F · days ≥90°F/yr ${Math.round(set.annual.annualHot90)}`
         + ` · Jan low ${rows[0].avgLow.toFixed(1)}°F · annual precip ${set.annual.annualPrecip.toFixed(1)} in`);
       if (arch.modelNote && arch.modelNote !== arch.model) log(`     note: ${arch.modelNote}`);

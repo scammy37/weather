@@ -32,6 +32,7 @@ jobs:
       - run: node test/unit.mjs           # climatology maths
       - run: node test/build-script.mjs   # precompute + quota maths
       - run: node test/validate-script.mjs # NOAA-comparison maths
+      - run: node test/stations.mjs       # station observations override the model
       - name: Install Playwright
         run: npm install --no-save playwright && npx playwright install --with-deps chromium
       - name: Exhaustive interaction crawl

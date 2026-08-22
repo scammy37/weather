@@ -1197,7 +1197,7 @@ function renderClimate() {
     return;
   }
 
-  box.innerHTML = accuracyNote() + climateNotes(c) + frostPanel(c);
+  box.innerHTML = sourceNote() + accuracyNote() + climateNotes(c) + frostPanel(c);
   renderKPIs(); renderDetail(); renderCharts(); renderTable();
 }
 
@@ -1223,6 +1223,28 @@ function rateLimitBanner(c) {
 /* How far the reanalysis sits from the nearest NOAA weather station, measured
    over an identical window. Stated plainly because a reader comparing these
    figures against a memory of their own thermometer deserves to know. */
+/* Where each figure actually comes from. Temperature, rain and snow are
+   station observations; everything a thermometer cannot measure stays with the
+   reanalysis. Saying so matters because the station is a real place a few
+   miles away, not the back garden. */
+function sourceNote() {
+  const c = curClim();
+  const st = c && c.meta && c.meta.station;
+  if (!st) return '';
+  const pct = Math.round((st.coverage || 0) * 100);
+  return `<div class="banner info"><span class="bico">🌡️</span><div>
+    <b>Temperature, rain and snow are measured, not modelled.</b>
+    They come from NOAA station ${esc(st.id)} — ${esc(st.name)}, about
+    ${esc(String(st.miles))} miles from the house — which reported on
+    ${esc(String(pct))}% of days in this period.
+    Cloud cover, sunshine, humidity and the ocean have no thermometer to read,
+    so those stay with the ERA5 reanalysis.
+    <br><span style="color:var(--muted)">The model is close on monthly averages but
+    not on day counts: over this window it put Bonita Springs at 13 days a year
+    at or above 90°F against a measured 80, because a 3°F bias moves an average
+    barely and a threshold enormously.</span></div></div>`;
+}
+
 function accuracyNote() {
   const v = VALIDATION;
   const l = loc();

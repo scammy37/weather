@@ -35,13 +35,13 @@ const j = JSON.parse(fs.readFileSync(DATA, 'utf8'));
 const REF = {
   nmb: { name: 'North Myrtle Beach, SC', station: 'Myrtle Beach area',
     julHigh: [86, 92], janHigh: [52, 60], janLow: [33, 42], julLow: [70, 78],
-    precip: [45, 65], snow: [0, 4], freeze: [0, 35], hot90: [10, 60], oceanAug: [78, 87] },
+    precip: [45, 65], snow: [0, 4], freeze: [0, 35], hot90: [8, 40], oceanAug: [78, 87] },
   bonita: { name: 'Bonita Springs, FL', station: 'Naples / Fort Myers',
     julHigh: [89, 95], janHigh: [72, 79], janLow: [50, 60], julLow: [72, 78],
-    precip: [45, 62], snow: [0, 0.1], freeze: [0, 3], hot90: [90, 160], oceanAug: [84, 91] },
+    precip: [45, 62], snow: [0, 0.1], freeze: [0, 3], hot90: [55, 160], oceanAug: [84, 91] },
   rockaway: { name: 'Rockaway, NJ', station: 'Morristown area',
     julHigh: [80, 88], janHigh: [34, 42], janLow: [15, 26], julLow: [60, 68],
-    precip: [40, 58], snow: [12, 48], freeze: [80, 135], hot90: [5, 35], oceanAug: [68, 76] }
+    precip: [40, 58], snow: [12, 48], freeze: [80, 135], hot90: [15, 50], oceanAug: [68, 76] }
 };
 
 /* Real NOAA station normals, produced by scripts/validate-climate.mjs. */
@@ -107,7 +107,11 @@ for (const [id, r] of Object.entries(REF)) {
   range('days ≤ 32°F  ', a.annualFreeze,  r.freeze);
   /* Threshold counts are the most sensitive to a degree or two of model bias,
      so they warn rather than fail. */
-  range('days ≥ 90°F  ', a.annualHot90,   r.hot90, false);
+  /* Hard again. This was downgraded to a warning while the figures came from
+     the reanalysis, which is how a Bonita Springs reading seven times too low
+     sat on the page behind a yellow "!" instead of a red one. The numbers come
+     from station observations now, so there is nothing left to excuse. */
+  range('days ≥ 90°F  ', a.annualHot90,   r.hot90);
   if (rows[7].sst != null) range('Aug ocean    ', rows[7].sst, r.oceanAug, false);
 
   /* Structural invariants that must hold whatever the climate. */
