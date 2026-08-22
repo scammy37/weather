@@ -105,6 +105,19 @@ async function checkState(where) {
   seenErrors = jsErrors.length;
 }
 
+/* Some buttons open the full-size radar over the page. Left open, it swallows
+   every subsequent click and the crawl stalls on the next tab — so the modal is
+   checked like any other state, then dismissed. Escape closing it is itself
+   part of what this asserts: a modal that cannot be dismissed traps the reader
+   exactly the way it trapped the crawl. */
+async function closeAnyModal(where) {
+  if (!(await p.$('#radarModal'))) return;
+  await checkState(`${where} (radar viewer open)`);
+  await p.keyboard.press('Escape');
+  await p.waitForTimeout(150);
+  ok(`${where}: the radar viewer closes on Escape`, (await p.$('#radarModal')) === null);
+}
+
 await p.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
 await p.waitForSelector('#app:not([hidden])', { timeout: 60000 });
 await p.waitForTimeout(1500);
@@ -114,6 +127,7 @@ const tabs = await p.$$eval('.tab', els => els.map(e => e.dataset.id));
 step(`tabs found: ${tabs.join(', ')}`);
 
 for (const tab of tabs) {
+  await closeAnyModal(`before tab ${tab}`);
   await p.click(`.tab[data-id="${tab}"]`);
   await p.waitForTimeout(FAST ? 400 : 900);
   /* Wait for whichever view this tab renders. */
@@ -213,6 +227,7 @@ for (const tab of tabs) {
     await h.click({ timeout: 5000 }).catch(() => {});
     await p.waitForTimeout(FAST ? 120 : 260);
     await checkState(`${tab} button "${txt}"`);
+    await closeAnyModal(`${tab} button "${txt}"`);
   }
   await settle();
 

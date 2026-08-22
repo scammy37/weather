@@ -1,7 +1,7 @@
 {
   "name": "Tri-State Weather",
   "short_name": "Tri-State",
-  "description": "Live weather and monthly climate normals for North Myrtle Beach SC, Bonita Springs FL and Rockaway NJ",
+  "description": "Live weather and monthly climate normals for Rockaway NJ, North Myrtle Beach SC and Bonita Springs FL",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

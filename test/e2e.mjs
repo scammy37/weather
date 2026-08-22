@@ -513,51 +513,163 @@ async function main() {
   ok('no NaN in the table', !qrTxt.includes('NaN'));
   ok('it does not crown a winner', !qrTxt.toLowerCase().includes('best') && !qrTxt.includes('place to be'));
   ok('an active alert shows as a count', (await page.$$('table.qr .qr-alert')).length >= 1);
+  /* Read the row's own identity rather than assuming which home is third:
+     this assertion was pinned to nth-child(3) and broke the moment the homes
+     were reordered, which is a test coupled to the wrong thing. */
+  const thirdId = await page.$eval('table.qr tbody tr:nth-child(3)', r => r.dataset.l || '');
+  ok('each quick-reference row knows which home it is', thirdId !== '', 'no data-id on the row');
   await page.click('table.qr tbody tr:nth-child(3)');
   await page.waitForSelector('.now-temp', { timeout: 15000 });
   ok('clicking a row opens that home',
-     (await page.getAttribute('.tab[data-id="rockaway"]', 'class')).includes('on'));
+     (await page.getAttribute(`.tab[data-id="${thirdId}"]`, 'class')).includes('on'), thirdId);
   await page.click('.tab[data-id="all"]');
   await page.waitForSelector('.ov-card', { timeout: 15000 });
 
-  console.log('\n\x1b[1m18f. Live radar\x1b[0m');
+  console.log('\n\x1b[1m18g. The homes appear in one consistent order everywhere\x1b[0m');
+  /* Asked for north to south: Rockaway, North Myrtle Beach, Bonita Springs.
+     An order that holds on the tabs but not in the table is worse than any
+     order, because the reader stops being able to scan by position. */
+  const WANT = ['rockaway', 'nmb', 'bonita'];
+  const tabOrder = await page.$$eval('.tab[data-id]', ts =>
+    ts.map(t => t.dataset.id).filter(id => id !== 'all'));
+  ok('the tabs run north to south', JSON.stringify(tabOrder) === JSON.stringify(WANT), tabOrder.join(', '));
+  const qrOrder = await page.$$eval('table.qr tbody tr', rs => rs.map(r => r.dataset.l));
+  ok('the quick-reference table uses the same order',
+     JSON.stringify(qrOrder) === JSON.stringify(WANT), qrOrder.join(', '));
+  const sub = await page.textContent('#headerSub');
+  ok('the header subtitle lists the homes in that order too',
+     sub.indexOf('Rockaway') < sub.indexOf('North Myrtle') && sub.indexOf('North Myrtle') < sub.indexOf('Bonita'),
+     sub.trim());
+  ok('and it is derived from the config rather than written out by hand',
+     sub.includes('Rockaway NJ') && sub.includes('Bonita Springs FL'), sub.trim());
+  const cardOrder = await page.$$eval('.ov-card .ov-name', ns => ns.map(n => n.textContent.trim()));
+  ok('the overview cards use the same order',
+     /^Rockaway/.test(cardOrder[0]) && /^North Myrtle/.test(cardOrder[1]) && /^Bonita/.test(cardOrder[2]),
+     cardOrder.join(' | '));
+  const cmpOrder = await page.$$eval('#compare .cmp-key, #compare .lg-item, #compare .legend span',
+    ns => ns.map(n => n.textContent.trim()).filter(Boolean));
+  if (cmpOrder.length >= 3)
+    ok('the comparison legend uses the same order',
+       /Rockaway/.test(cmpOrder[0]) && /Myrtle/.test(cmpOrder[1]) && /Bonita/.test(cmpOrder[2]),
+       cmpOrder.slice(0, 3).join(' | '));
+  /* Colour must follow the home, not its position, or reordering silently
+     recolours every chart in the dashboard. */
+  const dots = await page.$$eval('table.qr tbody tr', rs => rs.map(r => ({
+    id: r.dataset.l, colour: (r.querySelector('.qr-dot') || {}).style?.background || '' })));
+  const green = dots.find(d => d.id === 'rockaway');
+  ok('Rockaway kept its own accent colour after the reorder',
+     /27, 175, 122|1baf7a|25, 158, 112|199e70/.test(green.colour), JSON.stringify(dots));
+
+  console.log('\n\x1b[1m18f. Radar beside each home on the overview\x1b[0m');
+  /* One thumbnail per card rather than a single panel with a picker: all three
+     homes sit under different dishes, so a picker showed two-thirds of the
+     readers the wrong weather. */
+  await page.waitForFunction(() => document.querySelectorAll('.ov-radar-btn').length === 3,
+                             null, { timeout: 25000 });
+  ok('every home card carries its own radar', (await page.$$('.ov-radar-btn')).length === 3);
+  ok('the large radar panel is gone from the overview', (await page.$$('#radarPanel')).length === 0);
+
+  const thumbs = await page.$$eval('.ov-card', cards => cards.map(c => ({
+    home: (c.querySelector('.ov-name') || {}).textContent || '',
+    src: (c.querySelector('.ov-radar-img') || {}).src || '',
+    alt: (c.querySelector('.ov-radar-img') || {}).alt || '',
+    cap: (c.querySelector('.ov-radar-cap') || {}).textContent || ''
+  })));
+  ok('each thumbnail points at the NWS radar loop',
+     thumbs.every(t => t.src.includes('radar.weather.gov')), JSON.stringify(thumbs.map(t => t.src)));
+  ok('each thumbnail names its own station, and no two are the same',
+     new Set(thumbs.map(t => t.cap.trim())).size === 3, JSON.stringify(thumbs.map(t => t.cap)));
+  /* The three homes genuinely sit under KOKX, KLTX and KTBW. A card showing
+     another home's dish is showing the wrong weather. */
+  const stationFor = { Rockaway: 'KOKX', 'North Myrtle Beach': 'KLTX', 'Bonita Springs': 'KTBW' };
+  for (const t of thumbs) {
+    const home = Object.keys(stationFor).find(k => t.home.includes(k));
+    ok(`${home} shows its own radar station (${stationFor[home]})`,
+       t.src.includes(stationFor[home]) && t.cap.includes(stationFor[home]),
+       `${t.src} / ${t.cap}`);
+  }
+  ok('each radar image carries alt text naming the place it covers',
+     thumbs.every(t => /radar loop/i.test(t.alt) && t.alt.includes(t.home.split(',')[0])),
+     JSON.stringify(thumbs.map(t => t.alt)));
+
+  /* The card is itself a button that opens the home. The radar must enlarge
+     instead of navigating — the whole point of putting it there. */
+  await page.click('.ov-card:first-child .ov-radar-btn');
+  await page.waitForSelector('#radarModal', { timeout: 10000 });
+  ok('clicking a thumbnail opens the full-size radar', (await page.$$('#radarModal')).length === 1);
+  ok('and does NOT navigate to that home instead',
+     (await page.$$('.ov-card')).length === 3, 'the overview was replaced');
+  const modalTxt = await page.textContent('#radarModal');
+  ok('the viewer names the home and its station',
+     modalTxt.includes('Rockaway') && /K[A-Z]{3}/.test(modalTxt), modalTxt.slice(0, 120));
+  ok('the viewer is announced as a dialog',
+     (await page.getAttribute('#radarModal', 'role')) === 'dialog' &&
+     (await page.getAttribute('#radarModal', 'aria-modal')) === 'true');
+  ok('the enlarged image is the radar loop, not the thumbnail crop',
+     ((await page.getAttribute('#radarModal img', 'src')) || '').includes('radar.weather.gov'));
+  ok('it links out to the full NWS radar',
+     ((await page.getAttribute('#radarModal a.btn', 'href')) || '').includes('radar.weather.gov/station'));
+  ok('the page behind is locked so it cannot scroll under the viewer',
+     await page.evaluate(() => document.body.classList.contains('modal-open')));
+
+  const modalBefore = await page.getAttribute('#radarModal img', 'src');
+  await page.waitForTimeout(1100);
+  await page.click('#radarModal .js-radar-refresh');
+  await page.waitForTimeout(300);
+  ok('Refresh in the viewer fetches new sweeps rather than the cached copy',
+     modalBefore !== await page.getAttribute('#radarModal img', 'src'));
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  ok('Escape closes the viewer', (await page.$$('#radarModal')).length === 0);
+  ok('and the page scrolls again afterwards',
+     !(await page.evaluate(() => document.body.classList.contains('modal-open'))));
+  ok('the overview is still intact after closing', (await page.$$('.ov-card')).length === 3);
+
+  /* Clicking the backdrop is the other way people close these. */
+  await page.click('.ov-card:first-child .ov-radar-btn');
+  await page.waitForSelector('#radarModal', { timeout: 10000 });
+  await page.mouse.click(6, 6);
+  await page.waitForTimeout(200);
+  ok('clicking outside the viewer closes it too', (await page.$$('#radarModal')).length === 0);
+
+  /* Keyboard users must reach it without a mouse. */
+  await page.$eval('.ov-card:first-child .ov-radar-btn', b => b.focus());
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  ok('the thumbnail is reachable and openable from the keyboard',
+     (await page.$$('#radarModal')).length === 1);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+
+  /* A single home still gets the full panel, with its own station. */
+  await page.click('.tab[data-id="nmb"]');
   await page.waitForSelector('#radarPanel', { timeout: 20000 });
   await page.waitForFunction(() => {
     const n = document.getElementById('radarNote');
     return n && n.textContent.includes('Station');
   }, { timeout: 20000 }).catch(() => {});
   const radarTxt = await page.textContent('#radarPanel');
-  ok('the radar panel names its station', /Station\s+K[A-Z]{3}/.test(radarTxt), radarTxt.slice(0, 120));
+  ok('a single home still shows the full radar panel', /Station\s+K[A-Z]{3}/.test(radarTxt), radarTxt.slice(0, 120));
+  ok('it is that home\'s station', radarTxt.includes('KLTX'), radarTxt.slice(0, 120));
   ok('the radar image points at the NWS loop',
-     (await page.getAttribute('.js-radar-wrap img', 'src') || '').includes('radar.weather.gov'),
-     await page.getAttribute('.js-radar-wrap img', 'src'));
+     (await page.getAttribute('.js-radar-wrap img', 'src') || '').includes('radar.weather.gov'));
   ok('it links out to weather.gov',
      (await page.getAttribute('.js-radar-wrap a', 'href') || '').includes('radar.weather.gov/station'));
   ok('the image carries a descriptive alt text',
      ((await page.getAttribute('.js-radar-wrap img', 'alt')) || '').includes('radar loop'));
   const radarBefore = await page.getAttribute('.js-radar-wrap img', 'src');
   await page.waitForTimeout(1100);
-  await page.click('.js-radar-refresh');
+  await page.click('#radarPanel .js-radar-refresh');
   await page.waitForTimeout(300);
-  const radarAfter = await page.getAttribute('.js-radar-wrap img', 'src');
-  ok('Refresh fetches a new frame rather than the cached one', radarBefore !== radarAfter,
-     `${radarBefore} vs ${radarAfter}`);
+  ok('Refresh fetches a new frame rather than the cached one',
+     radarBefore !== await page.getAttribute('.js-radar-wrap img', 'src'));
   ok('the station came from the NWS point lookup, not the fallback',
      !radarTxt.includes('default for this area'), radarTxt.slice(0, 90));
-  /* Each home sits under a different radar, so the picker must actually swap it. */
-  ok('the all-homes view offers a radar picker', (await page.$$('.radar-pick')).length === 3);
-  await page.click('.radar-pick[data-r="rockaway"]');
-  await page.waitForFunction(() => {
-    const n = document.getElementById('radarNote');
-    return n && n.textContent.includes('KOKX');
-  }, { timeout: 15000 }).catch(() => {});
-  const rockRadar = await page.textContent('#radarPanel');
-  ok('picking Rockaway switches to its radar station', rockRadar.includes('KOKX'), rockRadar.slice(0, 110));
-  ok('and the heading follows', rockRadar.includes('Rockaway'));
-  await page.click('.radar-pick[data-r="nmb"]');
-  await page.waitForTimeout(400);
-  ok('switching back returns to the Carolina radar',
-     (await page.textContent('#radarPanel')).includes('KLTX'));
+  ok('a single home has no radar picker — there is nothing to pick',
+     (await page.$$('.radar-pick')).length === 0);
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
 
   console.log('\n\x1b[1m18d. Units come from the API, not from assumptions\x1b[0m');
   await page.click('.tab[data-id="nmb"]');
@@ -801,7 +913,13 @@ async function main() {
         models: { era5: { vsNoaa: {
           tmax: { meanBias: -2.71, worstMonth: 'Jul', worstBias: -3.28, n: 12 },
           tmin: { meanBias: 1.10, worstMonth: 'Jan', worstBias: 2.02, n: 12 },
-          prcp: { meanBias: 0.22, worstMonth: 'Aug', worstBias: 1.10, n: 12 } } } } }
+          prcp: { meanBias: 0.22, worstMonth: 'Aug', worstBias: 1.10, n: 12 } } } } },
+      /* Rockaway is the first home, so it is what the overview describes. */
+      rockaway: { name: 'Rockaway', noaa: { stationId: 'USW00054785', name: 'z', months: [] },
+        models: { era5: { vsNoaa: {
+          tmax: { meanBias: -1.42, worstMonth: 'Jul', worstBias: -2.42, n: 12 },
+          tmin: { meanBias: 2.81, worstMonth: 'Feb', worstBias: 4.10, n: 12 },
+          prcp: { meanBias: -0.08, worstMonth: 'Sep', worstBias: -0.40, n: 12 } } } } }
     }
   };
   /* innerText inserts line breaks around the <b> elements that carry the
@@ -819,11 +937,11 @@ async function main() {
   /* The overview is the landing view and loads no per-home normals, so the
      accuracy line has to arrive without a home being opened at all. */
   await vp.waitForFunction(
-    () => /USC00386153/.test(document.getElementById('sourceNotes').innerText),
+    () => /USW00054785/.test(document.getElementById('sourceNotes').innerText),
     null, { timeout: 20000 }).catch(() => {});
   const overviewDiag = flat(await vp.innerText('#sourceNotes'));
   ok('the accuracy line is present on the overview, before any home is opened',
-     overviewDiag.includes('USC00386153') && !overviewDiag.includes('comparing the normals'),
+     overviewDiag.includes('USW00054785') && !overviewDiag.includes('comparing the normals'),
      overviewDiag.slice(0, 220));
 
   await openHome(vp, 'nmb');

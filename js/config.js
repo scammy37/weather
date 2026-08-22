@@ -6,7 +6,36 @@
    temperature / wave data. Rockaway is ~50 mi inland, so its marine point is
    flagged `proxy:true` and always labelled as a nearest-coast reference
    rather than as "your" ocean. */
+/* Order is deliberate and is the order everything follows — tabs, overview
+   cards, the quick-reference table, the comparison charts and the CSV. North
+   to south, which is also how the homes were asked for. Each home carries its
+   own accent colour, so reordering never reassigns a colour to a different
+   place. */
 const LOCATIONS = [
+  {
+    id: 'rockaway',
+    name: 'Rockaway',
+    state: 'NJ',
+    short: 'Rockaway',
+    lat: 40.9012,
+    lon: -74.5143,
+    elevationFt: 538,
+    tz: 'America/New_York',
+    accent: '#1baf7a',
+    accentDark: '#199e70',
+    emoji: '🍂',
+    blurb: 'Morris County highlands — humid continental (Köppen Dfa)',
+    marine: {
+      lat: 40.08,
+      lon: -73.95,
+      proxy: true,
+      proxyName: 'Point Pleasant Beach',
+      proxyDistanceMi: 55,
+      label: 'Atlantic Ocean — off Point Pleasant Beach (nearest coast, ~55 mi)',
+      body: 'Atlantic Ocean',
+      coopsStation: '8531680', coopsName: 'Sandy Hook, NJ'
+    }
+  },
   {
     id: 'nmb',
     name: 'North Myrtle Beach',
@@ -51,30 +80,6 @@ const LOCATIONS = [
       label: 'Gulf of Mexico — offshore Bonita Beach',
       body: 'Gulf of Mexico',
       coopsStation: '8725110', coopsName: 'Naples Bay, FL'
-    }
-  },
-  {
-    id: 'rockaway',
-    name: 'Rockaway',
-    state: 'NJ',
-    short: 'Rockaway',
-    lat: 40.9012,
-    lon: -74.5143,
-    elevationFt: 538,
-    tz: 'America/New_York',
-    accent: '#1baf7a',
-    accentDark: '#199e70',
-    emoji: '🍂',
-    blurb: 'Morris County highlands — humid continental (Köppen Dfa)',
-    marine: {
-      lat: 40.08,
-      lon: -73.95,
-      proxy: true,
-      proxyName: 'Point Pleasant Beach',
-      proxyDistanceMi: 55,
-      label: 'Atlantic Ocean — off Point Pleasant Beach (nearest coast, ~55 mi)',
-      body: 'Atlantic Ocean',
-      coopsStation: '8531680', coopsName: 'Sandy Hook, NJ'
     }
   }
 ];

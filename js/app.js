@@ -15,7 +15,6 @@ const S = {
   locId:     ALL,
   openAlert: null,
   radar:     {},
-  radarPick: null,
   period:    DEFAULT_PERIOD,
   group:     'all',
   month:     -1,                 // focus month, -1 = none
@@ -53,6 +52,7 @@ async function init() {
   setTheme(stored || (prefersDark ? 'dark' : 'light'));
 
   buildTabs();
+  buildSubtitle();
   buildSelects();
   wireControls();
 
@@ -137,6 +137,17 @@ function buildSelects() {
     `<optgroup label="${GROUPS[gk].icon} ${esc(GROUPS[gk].label)}">`
     + list.map(mt => `<option value="${mt.key}"${mt.key === S.compareKey ? ' selected' : ''}>${esc(mt.label)}</option>`).join('')
     + `</optgroup>`).join('');
+}
+
+/* The header lists the three homes. It was written out by hand and still read
+   in the old order after the homes were reordered, which is the whole argument
+   for deriving it: a list that repeats LOCATIONS must come FROM LOCATIONS or it
+   silently disagrees with every other list on the page. */
+function buildSubtitle() {
+  const el = $('headerSub');
+  if (!el) return;
+  el.textContent = 'Live conditions & monthly climate normals — '
+    + LOCATIONS.map(l => `${l.name} ${l.state}`).join(' · ');
 }
 
 function wireControls() {
@@ -423,7 +434,7 @@ function renderLive() {
   host.appendChild(grid);
 
   renderForecast(host, l, d);
-  renderRadar(host, l.id, false);
+  renderRadar(host, l.id);
   renderHourly(host, l, d);
 }
 
@@ -588,16 +599,16 @@ async function loadRadar(locId) {
   return S.radar[locId];
 }
 
-function renderRadar(host, locId, pickable) {
+/* The single-home radar panel. There is no station picker any more: the
+   overview gives every home its own thumbnail, so the picker had no caller and
+   was dead code the moment that landed. */
+function renderRadar(host, locId) {
   const l = loc(locId);
   const p = el('section', 'panel');
   p.id = 'radarPanel';
   p.innerHTML = `<div class="panel-h">
       <h2>📡 Live radar — ${esc(l.name)}</h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        ${pickable ? `<div class="radar-picker">${LOCATIONS.map(x =>
-          `<button class="radar-pick${x.id === locId ? ' on' : ''}" data-r="${x.id}"
-            type="button">${x.emoji} ${esc(x.short)}</button>`).join('')}</div>` : ''}
         <button class="btn js-radar-refresh">↻ Refresh</button>
       </div></div>
     <div class="panel-b">
@@ -643,17 +654,96 @@ function renderRadar(host, locId, pickable) {
     setTimeout(() => { b.disabled = false; b.textContent = '↻ Refresh'; }, 900);
   });
 
-  if (pickable) p.querySelectorAll('.radar-pick').forEach(btn =>
-    btn.addEventListener('click', () => {
-      S.radarPick = btn.dataset.r;
-      const holder = el('div');
-      renderRadar(holder, S.radarPick, true);
-      p.replaceWith(holder.firstChild);
-    }));
-
   host.appendChild(p);
   loadRadar(locId).then(paint);
   return p;
+}
+
+/* ---------------------------------------------------------------------------
+   Radar thumbnails on the overview.
+
+   One small loop beside each home rather than a single large panel at the
+   bottom with a picker. Three homes under three different dishes (KOKX, KLTX,
+   KTBW) means the picker was always showing two-thirds of the reader the wrong
+   weather; a thumbnail per card shows all three at once, and clicking one
+   opens it full size.
+   ------------------------------------------------------------------------- */
+function mountRadarThumb(slot, l) {
+  if (!slot) return;
+  slot.innerHTML = `<div class="ov-radar-ph">radar…</div>`;
+  loadRadar(l.id).then(st => {
+    if (!st) {
+      /* Say why the box is empty rather than leaving a grey rectangle. */
+      slot.innerHTML = `<div class="ov-radar-ph">no radar</div>`;
+      return;
+    }
+    slot.innerHTML = `
+      <button type="button" class="ov-radar-btn js-radar-open"
+              aria-label="Enlarge the ${esc(st.id)} radar loop covering ${esc(l.name)}">
+        <img src="${esc(st.loop)}?t=${Date.now()}" class="ov-radar-img" loading="lazy"
+             alt="Weather radar loop for station ${esc(st.id)}, covering ${esc(l.name)}">
+        <span class="ov-radar-zoom" aria-hidden="true">⤢</span>
+      </button>
+      <div class="ov-radar-cap">${esc(st.id)}${st.fallback ? '' : ' · nearest'}</div>`;
+
+    const img = slot.querySelector('img');
+    img.addEventListener('error', () => { slot.innerHTML = `<div class="ov-radar-ph">radar<br>offline</div>`; });
+    /* The whole card is a button that opens the home. Without this the radar
+       would navigate away instead of enlarging. */
+    slot.querySelector('.js-radar-open').addEventListener('click', e => {
+      e.stopPropagation();
+      e.preventDefault();
+      openRadarViewer(l, st);
+    });
+  });
+}
+
+/* Full-size radar over the page. Escape or the backdrop closes it, and focus
+   returns to where it came from. */
+function openRadarViewer(l, st) {
+  closeRadarViewer();
+  const ov = el('div', 'radar-modal');
+  ov.id = 'radarModal';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', `Radar for ${l.name}`);
+  ov.innerHTML = `
+    <div class="radar-modal-box" role="document">
+      <div class="radar-modal-h">
+        <div><b>📡 ${esc(l.name)}, ${l.state}</b>
+          <span class="radar-modal-sub">station ${esc(st.id)}${st.fallback ? ' (default for this area)' : ''} · last ten sweeps</span></div>
+        <div class="radar-modal-btns">
+          <button class="btn js-radar-refresh" type="button">↻ Refresh</button>
+          <a class="btn" href="${esc(st.page)}" target="_blank" rel="noopener">Open on weather.gov ↗</a>
+          <button class="btn js-radar-close" type="button" aria-label="Close the radar">✕ Close</button>
+        </div>
+      </div>
+      <div class="radar-modal-b js-radar-body">
+        <img src="${esc(st.loop)}?t=${Date.now()}" alt="Radar loop for station ${esc(st.id)}, covering ${esc(l.name)}">
+      </div>
+    </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) closeRadarViewer(); });
+  ov.querySelector('.js-radar-close').addEventListener('click', closeRadarViewer);
+  ov.querySelector('.js-radar-refresh').addEventListener('click', e => {
+    const b = e.currentTarget;
+    b.disabled = true; b.textContent = '↻ Refreshing…';
+    ov.querySelector('.js-radar-body').innerHTML =
+      `<img src="${esc(st.loop)}?t=${Date.now()}" alt="Radar loop for station ${esc(st.id)}, covering ${esc(l.name)}">`;
+    setTimeout(() => { b.disabled = false; b.textContent = '↻ Refresh'; }, 900);
+  });
+  document.body.appendChild(ov);
+  document.body.classList.add('modal-open');
+  document.addEventListener('keydown', radarEscape);
+  ov.querySelector('.js-radar-close').focus();
+}
+
+function radarEscape(e) { if (e.key === 'Escape') closeRadarViewer(); }
+
+function closeRadarViewer() {
+  const ov = $('radarModal');
+  if (ov) ov.remove();
+  document.body.classList.remove('modal-open');
+  document.removeEventListener('keydown', radarEscape);
 }
 
 /* ---------------------------------------------------------------------------
@@ -738,37 +828,46 @@ function renderOverview(host) {
           <div class="ov-blurb">${esc(l.blurb)}</div>
         </div>
       </div>
-      <div class="ov-now">
-        <span class="ov-ico" aria-hidden="true">${w.icon}</span>
-        <span class="ov-temp">${fmtNum(cur.temperature_2m, 0)}°</span>
-        <span class="ov-meta">
-          <span class="ov-cond">${esc(w.label)}</span>
-          <span class="ov-feels">Feels ${fmtNum(cur.apparent_temperature, 0)}°</span>
-        </span>
+      <div class="ov-mid">
+        <div class="ov-mid-l">
+          <div class="ov-now">
+            <span class="ov-ico" aria-hidden="true">${w.icon}</span>
+            <span class="ov-temp">${fmtNum(cur.temperature_2m, 0)}°</span>
+            <span class="ov-meta">
+              <span class="ov-cond">${esc(w.label)}</span>
+              <span class="ov-feels">Feels ${fmtNum(cur.apparent_temperature, 0)}°</span>
+            </span>
+          </div>
+          <div class="ov-hilo">
+            <span style="color:${poles.high}">↑ ${fmtNum(daily.temperature_2m_max?.[ti], 0)}°</span>
+            <span style="color:${poles.low}">↓ ${fmtNum(daily.temperature_2m_min?.[ti], 0)}°</span>
+            <span class="ov-pop">${fmtNum(daily.precipitation_probability_max?.[ti], 0)}% rain today</span>
+          </div>
+          <div class="ov-chips">${chips.map(([i, v, t]) =>
+            `<span class="ov-chip" title="${esc(t)}"><span aria-hidden="true">${i}</span> ${esc(v)}</span>`).join('')}</div>
+        </div>
+        <div class="ov-radar js-ov-radar"></div>
       </div>
-      <div class="ov-hilo">
-        <span style="color:${poles.high}">↑ ${fmtNum(daily.temperature_2m_max?.[ti], 0)}°</span>
-        <span style="color:${poles.low}">↓ ${fmtNum(daily.temperature_2m_min?.[ti], 0)}°</span>
-        <span class="ov-pop">${fmtNum(daily.precipitation_probability_max?.[ti], 0)}% rain today</span>
-      </div>
-      <div class="ov-chips">${chips.map(([i, v, t]) =>
-        `<span class="ov-chip" title="${esc(t)}"><span aria-hidden="true">${i}</span> ${esc(v)}</span>`).join('')}</div>
       <div class="ov-sun">🌅 ${esc(fmtMinutes(riseMin))} · 🌇 ${esc(fmtMinutes(setMin))} ·
         ${esc(fmtDuration(sun.daylightMinutes))}${nowMin != null && riseMin != null && setMin != null
           ? ` · ${esc(daylightProgress(nowMin, riseMin, setMin))}` : ''}</div>
       <div class="ov-week">${week}</div>
       <div class="ov-more">Full dashboard for ${esc(l.short)} →</div>`;
 
+    mountRadarThumb(card.querySelector('.js-ov-radar'), l);
+
     const open = () => selectLocation(l.id);
     card.addEventListener('click', open);
     card.addEventListener('keydown', e => {
+      /* Only when the card itself has focus. The radar button inside it is its
+         own control: without this check, Enter on the radar both opened the
+         viewer and navigated away from it. */
+      if (e.target !== card) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
     });
     grid.appendChild(card);
   });
   host.appendChild(grid);
-  /* On the all-homes view the reader picks whose radar to watch. */
-  renderRadar(host, S.radarPick || LOCATIONS[0].id, true);
 }
 
 /* What can still be shown from the NWS observation alone. */
