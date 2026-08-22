@@ -1,0 +1,96 @@
+name: Rebuild climate normals
+
+# Pulls the ERA5 history once, aggregates it, and commits data/climate.json.
+#
+# The dashboard used to do this in every visitor's browser, which cost roughly
+# 5,500 weighted Open-Meteo calls per page load against a 5,000/hour free-tier
+# cap — the page rate-limited itself. Doing it here, once a month, drops a
+# visitor's cost to the live feed alone: about 5 weighted calls.
+#
+# The run deliberately takes over an hour: the script paces its requests so the
+# rolling hourly total stays under the cap. That is wall-clock time on a free
+# runner, not effort.
+
+on:
+  schedule:
+    # 04:00 UTC on the 3rd of each month. ERA5 lags real time by about five
+    # days, so this is comfortably clear of the previous month's boundary.
+    - cron: '0 4 3 * *'
+  workflow_dispatch:
+    inputs:
+      period:
+        description: 'Normals period to build ("all" for every period — takes ~3.5 h)'
+        required: false
+        default: '1996-2025'
+        type: string
+      home:
+        description: 'Single home id (nmb, bonita, rockaway). Blank builds all three.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: climate-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build data/climate.json
+        id: build
+        # Exit 2 means some sets failed but others succeeded — a partial refresh
+        # is still better than none, so it is committed and flagged rather than
+        # thrown away.
+        run: |
+          set +e
+          node scripts/build-climate.mjs \
+            --period "${{ inputs.period || '1996-2025' }}" \
+            ${{ inputs.home && format('--home {0}', inputs.home) || '' }}
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ge 3 ] || [ "$code" -eq 1 ]; then
+            echo "::error::Build failed with exit $code — nothing usable was produced."
+            exit "$code"
+          fi
+          [ "$code" -eq 2 ] && echo "::warning::Some home/period sets failed; committing the rest."
+          exit 0
+
+      - name: Sanity-check the output
+        run: |
+          node -e "
+            const j = require('./data/climate.json');
+            const sets = Object.values(j.homes).reduce((n,h)=>n+Object.keys(h).length,0);
+            if (!sets) { console.error('No home/period sets in the file.'); process.exit(1); }
+            for (const [home, periods] of Object.entries(j.homes))
+              for (const [p, set] of Object.entries(periods)) {
+                if (set.rows.length !== 12) { console.error(home,p,'has',set.rows.length,'rows'); process.exit(1); }
+                if (set.rows.some(r => r.avgHigh == null)) { console.error(home,p,'missing avgHigh'); process.exit(1); }
+              }
+            console.log('OK —', sets, 'home/period sets, generated', j.generated);
+          "
+
+      - name: Commit if the data changed
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- data/climate.json; then
+            echo "No change in data/climate.json — nothing to commit."
+            exit 0
+          fi
+          git add data/climate.json
+          git commit -m "Refresh climate normals ($(date -u +%Y-%m-%d))
+
+          Rebuilt by .github/workflows/climate.yml from the Open-Meteo ERA5
+          archive. Regenerate locally with: node scripts/build-climate.mjs"
+          git push

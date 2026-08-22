@@ -69,10 +69,48 @@ from [Open-Meteo](https://open-meteo.com/) — free, no API key, no account.
 | Air quality | Open-Meteo Air Quality API (CAMS), US AQI scale |
 | Sunrise, sunset, solar noon, daylight | computed locally — NOAA solar equations |
 
-The normals are built by pulling 15–30 years of **daily** ERA5 records for a
-location and aggregating them in the browser. That takes a few seconds the first
-time; the result is cached in `localStorage` for 30 days, so every later visit is
-instant. **↻ Rebuild normals** forces a fresh pull.
+The normals are **precomputed and committed** to `data/climate.json`, so opening
+the page makes no historical API requests at all — it loads one small file and
+renders instantly.
+
+That file is built by `scripts/build-climate.mjs`, which pulls 30 years of daily
+ERA5 records for each home and aggregates them.
+`.github/workflows/climate.yml` runs it on the 3rd of each month and commits the
+result.
+
+### Why it is precomputed
+
+Open-Meteo weights an API call as roughly `(days ÷ 14) × (variables ÷ 10)`.
+Building the normals in the browser meant every visitor paid:
+
+| | weighted calls |
+|---|---|
+| archive, core variables (3 × 10 yr × 17 vars) | 1,331 |
+| archive, extended variables (3 × 10 yr × 5 vars) | 391 |
+| marine sea-surface temperature | 115 |
+| **per home** | **1,837** |
+| **all three homes — one page load** | **5,511** |
+
+The free tier allows 10,000 calls/day and **5,000/hour**, so a single page load
+blew the hourly cap and the dashboard rate-limited itself. Precomputing drops a
+visitor's cost to the live feed alone — about **5 weighted calls**.
+
+The build script paces its own requests (90 s between chunks, ~77 min total) to
+stay under the hourly cap while it runs.
+
+Only the default period is precomputed; a run covering all three periods would
+cost ~13,000 calls, over the daily cap. Selecting another period falls back to
+building it live, and the page says so.
+
+Rebuild manually with:
+
+```bash
+node scripts/build-climate.mjs                 # all homes, default period
+node scripts/build-climate.mjs --period all    # every period (~3.5 h)
+node scripts/build-climate.mjs --home nmb
+```
+
+or from the Actions tab → *Rebuild climate normals* → *Run workflow*.
 
 Sunrise and sunset are calculated rather than fetched, using the NOAA solar
 position equations, then converted to local wall-clock time with the browser's
@@ -121,7 +159,9 @@ way everywhere rather than implying otherwise.
 | `index.html` | Page structure and all styling |
 | `js/config.js` | Locations, the 48-measure catalogue, WMO weather codes |
 | `js/solar.js` | NOAA sunrise / sunset / solar-noon / daylight equations |
-| `js/api.js` | Open-Meteo access — retries, chunking, diagnostics, caching |
+| `js/api.js` | Open-Meteo access — retries, rate-limit backoff, chunking, diagnostics |
+| `scripts/build-climate.mjs` | Precomputes `data/climate.json` (run monthly by CI) |
+| `data/climate.json` | The committed normals the dashboard actually reads |
 | `js/climate.js` | Turns raw daily records into monthly normals |
 | `js/charts.js` | Hand-rolled SVG charts (no chart library) |
 | `js/app.js` | State, rendering and wiring |
@@ -129,7 +169,8 @@ way everywhere rather than implying otherwise.
 | `manifest.json`, `icon.svg` | PWA metadata and icon |
 | `serve.py` | Local static server |
 | `test/unit.mjs` | 71 assertions on the aggregation maths |
-| `test/e2e.mjs` | 89 browser assertions across 20 groups, against a mocked Open-Meteo |
+| `test/e2e.mjs` | 107 browser assertions across 22 groups, against a mocked Open-Meteo |
+| `test/build-script.mjs` | 28 assertions on the precompute script and its output |
 | `test/mock.mjs` | Synthetic API responses shaped like the real ones |
 
 ---
@@ -147,6 +188,7 @@ A server is required — browsers block `fetch()` from `file://` URLs.
 
 ```bash
 node test/unit.mjs                       # aggregation maths, no network
+node test/build-script.mjs               # precompute script, mocked API
 npm install --no-save playwright         # first time only
 node test/e2e.mjs                        # full UI, mocked APIs
 node test/e2e.mjs --headed               # watch it run
@@ -156,8 +198,9 @@ node test/e2e.mjs --headed               # watch it run
 the suite is deterministic and needs no internet. It covers boot, the live feed,
 the forecast drill-down, the normals build, chart rendering and hover, month
 selection, table sorting, the comparison view, caching, CSV export, dark mode,
-mobile layout, foreign time zones, and three failure modes (everything down,
-marine down, archive down).
+mobile layout, foreign time zones, rate-limit handling, the precomputed
+snapshot path (asserting **zero** archive requests), and three failure modes
+(everything down, marine down, archive down).
 
 ## Publishing
 
@@ -171,6 +214,8 @@ build step.
 
 `.github/workflows/ci.yml` runs the unit tests on every push and pull
 request. It does not deploy.
+
+`.github/workflows/climate.yml` refreshes `data/climate.json` monthly.
 
 ## PWA install
 

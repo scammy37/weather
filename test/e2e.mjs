@@ -166,8 +166,15 @@ async function main() {
   ok('row click opens April', (await page.textContent('#detailTitle')).includes('April'));
 
   console.log('\n\x1b[1m8. Comparison view\x1b[0m');
-  await page.waitForFunction(() => document.querySelectorAll('#compareTableBox tbody tr').length === 3, { timeout: 90000 });
-  ok('all three homes appear in the comparison table', true);
+  /* No snapshot is served in this context, so the comparison asks before
+     spending ~1,800 weighted API calls per extra home. */
+  await page.waitForSelector('#btnLoadCompare', { timeout: 20000 });
+  ok('comparison asks before building homes live', true);
+  ok('the prompt states the cost',
+     (await page.textContent('#compareNote')).includes('weighted API calls'));
+  await page.click('#btnLoadCompare');
+  await page.waitForFunction(() => document.querySelectorAll('#compareTableBox tbody tr').length === 3, { timeout: 120000 });
+  ok('all three homes appear once opted in', true);
   ok('comparison chart has a legend with 3 entries',
      (await page.$$eval('#cmpSvg g rect', e => e.length)) >= 3);
   ok('comparison chart draws 3 lines',
@@ -318,7 +325,94 @@ async function main() {
   await m.screenshot({ path: path.join(SHOTS, '05-mobile.png'), fullPage: false });
   await m.close();
 
-  console.log('\n\x1b[1m19. Time zones — a viewer in Denver reading East Coast homes\x1b[0m');
+  console.log('\n\x1b[1m19. Precomputed snapshot — the page must not hit the archive at all\x1b[0m');
+  /* Build a snapshot the same way scripts/build-climate.mjs does, serve it, and
+     assert the archive is never touched. This is the whole point of the fix. */
+  const snapPath = path.join(ROOT, 'data', 'climate.json');
+  const hadSnap = fs.existsSync(snapPath);
+  const snapBackup = hadSnap ? fs.readFileSync(snapPath) : null;
+  fs.mkdirSync(path.dirname(snapPath), { recursive: true });
+  fs.copyFileSync(path.join(SHOTS, 'climate-test.json'), snapPath);
+
+  const snapCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const sp = await snapCtx.newPage();
+  let archiveHits = 0, marineArchiveHits = 0;
+  await sp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
+  await sp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
+  await sp.route('**://archive-api.open-meteo.com/**', r => { archiveHits++; json(r, archiveResponse(r.request().url())); });
+  await sp.route('**://marine-api.open-meteo.com/**',  r => {
+    if (r.request().url().includes('start_date')) marineArchiveHits++;
+    json(r, marineResponse(r.request().url()));
+  });
+  await sp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
+  await sp.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  ok('normals render from the snapshot', (await sp.$$('#kpis .kpi')).length >= 18);
+  ok('ZERO archive requests were made', archiveHits === 0, `${archiveHits} hits`);
+  ok('ZERO marine-archive requests were made', marineArchiveHits === 0, `${marineArchiveHits} hits`);
+  ok('the page says the data came from the snapshot',
+     (await sp.textContent('#climateStatus')).includes('precomputed'));
+  ok('charts still render in full', (await sp.$$('#charts .chart')).length >= 25);
+
+  /* All three homes are in the snapshot, so the comparison is free and should
+     populate without asking. */
+  await sp.waitForFunction(() => document.querySelectorAll('#compareTableBox tbody tr').length === 3, { timeout: 20000 });
+  ok('comparison fills from the snapshot with no prompt', true);
+  ok('no "Load anyway" prompt when the snapshot covers everything',
+     (await sp.$('#btnLoadCompare')) === null);
+
+  /* Switching to a period the snapshot lacks must fall back, and say so. */
+  const snapJson = JSON.parse(fs.readFileSync(snapPath, 'utf8'));
+  for (const h of Object.values(snapJson.homes)) delete h['2011-2025'];
+  fs.writeFileSync(snapPath, JSON.stringify(snapJson));
+  const sp2 = await snapCtx.newPage();
+  let archiveHits2 = 0;
+  await sp2.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
+  await sp2.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
+  await sp2.route('**://archive-api.open-meteo.com/**', r => { archiveHits2++; json(r, archiveResponse(r.request().url())); });
+  await sp2.route('**://marine-api.open-meteo.com/**',  r => json(r, marineResponse(r.request().url())));
+  await sp2.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
+  await sp2.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  ok('default period still costs no archive requests', archiveHits2 === 0, `${archiveHits2}`);
+  await sp2.selectOption('#selPeriod', '2011-2025');
+  await sp2.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 120000 });
+  ok('a missing period falls back to building live', archiveHits2 > 0, `${archiveHits2}`);
+  ok('and warns that it was built live',
+     (await sp2.textContent('#climateStatus')).includes('built live'));
+  ok('comparison offers opt-in rather than fetching three homes',
+     (await sp2.$('#btnLoadCompare')) !== null);
+  await snapCtx.close();
+
+  console.log('\n\x1b[1m20. Rate-limit handling\x1b[0m');
+  const rlCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const rp = await rlCtx.newPage();
+  await rp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
+  await rp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
+  await rp.route('**://marine-api.open-meteo.com/**',  r => json(r, marineResponse(r.request().url())));
+  await rp.route('**://archive-api.open-meteo.com/**', r => r.fulfill({
+    status: 429, contentType: 'application/json',
+    headers: { 'Access-Control-Allow-Origin': '*' },
+    body: JSON.stringify({ error: true, reason: 'Hourly API request limit exceeded. Please try again in the next hour.' })
+  }));
+  fs.writeFileSync(snapPath, JSON.stringify(snapJson));
+  await rp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
+  await rp.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  const rlStart = Date.now();
+  await rp.selectOption('#selPeriod', '2011-2025');
+  await rp.waitForSelector('#climateStatus .banner', { timeout: 60000 });
+  const rlText = await rp.textContent('#climateStatus');
+  ok('an hourly quota rejection is not retried in a loop', Date.now() - rlStart < 30000,
+     `took ${((Date.now() - rlStart) / 1000).toFixed(0)}s`);
+  ok('the rate limit is named as such, not shown as a generic error',
+     rlText.includes('free-tier limit'), rlText.slice(0, 90).trim());
+  ok('it says when the quota clears', rlText.includes('next hour'));
+  ok('it points back at the precomputed period', rlText.includes('precomputed'));
+  ok('live conditions still work through a rate limit',
+     /^-?\d+°$/.test((await rp.textContent('.now-temp')).trim()));
+  await rlCtx.close();
+
+  if (hadSnap) fs.writeFileSync(snapPath, snapBackup); else fs.rmSync(snapPath, { force: true });
+
+  console.log('\n\x1b[1m21. Time zones — a viewer in Denver reading East Coast homes\x1b[0m');
   const tzCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Denver' });
   const tzp = await tzCtx.newPage();
   await tzp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
@@ -348,7 +442,7 @@ async function main() {
      !(await tzp.textContent('.now')).includes('NaN'));
   await tzCtx.close();
 
-  console.log('\n\x1b[1m20. Console health\x1b[0m');
+  console.log('\n\x1b[1m22. Console health\x1b[0m');
   const realErrors = consoleErrors.filter(e => !/Failed to load resource|net::ERR/.test(e));
   ok('no uncaught JavaScript errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 

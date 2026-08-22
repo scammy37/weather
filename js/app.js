@@ -422,13 +422,60 @@ function renderHourly(host, l, d) {
 }
 
 /* ---------------------------------------------------------------------------
+   Precomputed normals.
+
+   data/climate.json is built by scripts/build-climate.mjs and committed, so the
+   page normally makes zero archive requests. Building the normals in the
+   browser cost roughly 5,500 weighted Open-Meteo calls per load against a
+   5,000/hour free-tier cap — the page rate-limited itself. The snapshot is now
+   the primary source; live building survives only as the fallback for a period
+   the snapshot does not carry.
+   ------------------------------------------------------------------------- */
+let SNAPSHOT = null;          // null = not loaded yet, false = unavailable
+
+async function loadSnapshot() {
+  if (SNAPSHOT !== null) return SNAPSHOT;
+  const entry = diagStart('Precomputed normals — data/climate.json', 'data/climate.json');
+  try {
+    const res = await fetch('data/climate.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (!j || !j.homes) throw new Error('unexpected shape');
+    SNAPSHOT = j;
+    const sets = Object.values(j.homes).reduce((n, h) => n + Object.keys(h).length, 0);
+    diagEnd(entry, 'ok', `${sets} home/period sets, built ${new Date(j.generated).toLocaleDateString()}`);
+  } catch (err) {
+    SNAPSHOT = false;
+    diagEnd(entry, 'fail', `${String(err && err.message || err)} — falling back to building normals live`);
+  }
+  return SNAPSHOT;
+}
+
+function snapshotFor(locId, period) {
+  const s = SNAPSHOT;
+  return (s && s.homes && s.homes[locId] && s.homes[locId][period]) || null;
+}
+
+/* ---------------------------------------------------------------------------
    Climate normals — load, cache, render
    ------------------------------------------------------------------------- */
 async function loadClimate(locId, period, force) {
   const key = climKey(locId, period);
   if (S.clim[key] || S.climState[key] === 'loading') { renderClimate(); return; }
 
-  /* Cached aggregates load instantly; raw day arrays are never stored. */
+  /* 1. The committed snapshot — no network cost beyond one small file. */
+  await loadSnapshot();
+  const snap = snapshotFor(locId, period);
+  if (snap && !force) {
+    S.clim[key] = { ...snap, meta: { ...snap.meta, fromSnapshot: true,
+                                     snapshotBuilt: SNAPSHOT && SNAPSHOT.generated } };
+    S.climState[key] = 'ready';
+    renderClimate();
+    loadCompareSet();
+    return;
+  }
+
+  /* 2. Anything this browser built earlier for a period the snapshot lacks. */
   if (!force) {
     const cached = cacheGet(cacheKey('clim', locId, period));
     if (cached && cached.rows) {
@@ -470,20 +517,36 @@ async function loadClimate(locId, period, force) {
     cacheSet(cacheKey('clim', locId, period), payload);
   } catch (err) {
     S.climState[key] = 'error';
-    S.clim[key] = { error: String(err && err.message || err) };
+    S.clim[key] = {
+      error: String(err && err.message || err),
+      rateLimited: err && err.name === 'RateLimitError',
+      window: err && err.window
+    };
   }
   renderClimate();
   renderDiagnostics();
   loadCompareSet();
 }
 
-/* Comparison needs all three homes; they load quietly in the background. */
-function loadCompareSet() {
+/* Comparison needs all three homes. When the snapshot covers them that is free,
+   so they load immediately. When it does not, each home would mean another
+   ~1,800 weighted API calls, so the user is asked first rather than having
+   three archive pulls fired off on their behalf. */
+function loadCompareSet(userAsked) {
   LOCATIONS.forEach(l => {
     const k = climKey(l.id, S.period);
-    if (!S.clim[k] && S.climState[k] !== 'loading') loadClimate(l.id, S.period);
+    if (S.clim[k] || S.climState[k] === 'loading') return;
+    if (snapshotFor(l.id, S.period) || userAsked) loadClimate(l.id, S.period);
   });
   renderCompare();
+}
+
+/* True when some home still needs a live build for the comparison. */
+function compareNeedsFetch() {
+  return LOCATIONS.some(l => {
+    const k = climKey(l.id, S.period);
+    return !S.clim[k] && !snapshotFor(l.id, S.period);
+  });
 }
 
 function renderClimate() {
@@ -507,11 +570,11 @@ function renderClimate() {
 
   const c = curClim();
   if (!c || c.error) {
-    box.innerHTML = `<div class="banner err"><span class="bico">⚠️</span><div>
-      <b>Could not build the monthly normals for ${esc(loc().name)}.</b>
-      ${esc(c && c.error || 'Unknown error.')}
-      <br>Live conditions above still work. Press <b>↻ Rebuild normals</b> to retry —
-      the historical archive occasionally rate-limits large requests.</div></div>`;
+    box.innerHTML = c && c.rateLimited ? rateLimitBanner(c) : `
+      <div class="banner err"><span class="bico">⚠️</span><div>
+        <b>Could not build the monthly normals for ${esc(loc().name)}.</b>
+        ${esc(c && c.error || 'Unknown error.')}
+        <br>Live conditions above still work. Press <b>↻ Rebuild normals</b> to retry.</div></div>`;
     $('kpis').innerHTML = ''; $('charts').innerHTML = ''; clearTable();
     return;
   }
@@ -520,8 +583,36 @@ function renderClimate() {
   renderKPIs(); renderDetail(); renderCharts(); renderTable();
 }
 
+/* Rate limits are not a bug the user can fix by retrying, so say what actually
+   happened, when it clears, and what still works meanwhile. */
+function rateLimitBanner(c) {
+  const clears = c.window === 'minute' ? 'in about a minute'
+               : c.window === 'hour'   ? 'at the top of the next hour'
+               : c.window === 'day'    ? 'tomorrow'
+               : 'shortly';
+  const inSnapshot = SNAPSHOT && SNAPSHOT.homes && Object.keys(SNAPSHOT.homes).length;
+  return `<div class="banner warn"><span class="bico">⏳</span><div>
+    <b>Open-Meteo's free-tier limit was reached, so this period could not be built.</b>
+    The quota clears ${esc(clears)}.
+    ${inSnapshot ? `Switch back to <b>${esc(PERIODS[DEFAULT_PERIOD].label)}</b> — that one is
+      precomputed and needs no API calls at all.`
+    : `The precomputed normals file is missing, so every period has to be built live.
+      See the Data sources panel below.`}
+    <br>Live conditions and the forecast above are unaffected — they are tiny by comparison.
+    </div></div>`;
+}
+
 function climateNotes(c) {
   const bits = [];
+  if (c.meta && c.meta.fromSnapshot) bits.push(`<div class="banner info"><span class="bico">⚡</span><div>
+    <b>Loaded from the precomputed normals</b>${c.meta.snapshotBuilt
+      ? ` built ${esc(new Date(c.meta.snapshotBuilt).toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}))}`
+      : ''} — no historical API requests were needed for this.</div></div>`);
+  else if (c.rows) bits.push(`<div class="banner warn"><span class="bico">🐢</span><div>
+    <b>This period is not in the precomputed set, so it was built live.</b>
+    That costs roughly 1,800 weighted Open-Meteo calls against a 5,000/hour free-tier
+    cap, which is why it was slow. It is cached in this browser for 30 days.
+    ${esc(PERIODS[DEFAULT_PERIOD].label)} loads instantly.</div></div>`);
   if (!c.meta.extended) bits.push(`<div class="banner warn"><span class="bico">ℹ️</span><div>
     <b>Humidity, dew point, cloud cover and pressure are unavailable for this period.</b>
     The archive rejected the extended variable set, so those four charts are hidden.
@@ -786,9 +877,20 @@ function renderCompare() {
   const ready = LOCATIONS.filter(l => { const c = S.clim[climKey(l.id, S.period)]; return c && c.rows; });
   const pending = LOCATIONS.length - ready.length;
 
-  $('compareNote').textContent = pending
-    ? `Loading ${pending} more location${pending === 1 ? '' : 's'}…`
-    : `${PERIODS[S.period].label} · all three homes`;
+  const needsFetch = compareNeedsFetch();
+  $('compareNote').innerHTML = needsFetch
+    ? `<span style="color:var(--muted)">${pending} home${pending === 1 ? '' : 's'} not in the
+       precomputed set for this period — building them live costs about
+       ${1800 * pending} weighted API calls.</span>
+       <button class="btn" id="btnLoadCompare" style="margin-left:8px">Load anyway</button>`
+    : pending
+      ? `Loading ${pending} more location${pending === 1 ? '' : 's'}…`
+      : `${esc(PERIODS[S.period].label)} · all three homes`;
+  const lb = $('btnLoadCompare');
+  if (lb) lb.addEventListener('click', () => {
+    lb.disabled = true; lb.textContent = 'Loading…';
+    loadCompareSet(true);
+  });
 
   if (!ready.length) {
     box.innerHTML = `<h3>${esc(m.label)}</h3><div class="cdesc">Waiting for the monthly normals to finish building.</div>`;

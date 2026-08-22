@@ -48,12 +48,37 @@ function diagEnd(entry, status, note = '') {
   if (typeof onDiagUpdate === 'function') onDiagUpdate();
 }
 
+/* Open-Meteo answers an exceeded quota with HTTP 429 and a reason naming the
+   window ("Minutely API request limit exceeded"). That is not a transient
+   blip: retrying in a second guarantees another rejection, so it gets its own
+   much longer backoff, and its own error type so the UI can explain it. */
+const RATE_LIMIT_RE = /limit exceeded|rate.?limit|too many requests|quota/i;
+function isRateLimit(status, reason) {
+  return status === 429 || RATE_LIMIT_RE.test(String(reason || ''));
+}
+class RateLimitError extends Error {
+  constructor(reason, window) { super(reason); this.name = 'RateLimitError'; this.window = window; }
+}
+function limitWindow(reason) {
+  const r = String(reason || '').toLowerCase();
+  if (r.includes('minute')) return 'minute';
+  if (r.includes('hour'))   return 'hour';
+  if (r.includes('day') || r.includes('daily')) return 'day';
+  return 'unknown';
+}
+
 /* --- low-level fetch ---------------------------------------------------- */
 async function apiGet(url, { label = 'request', retries = 3, timeout = 45000 } = {}) {
   const entry = diagStart(label, url);
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep(600 * 2 ** (attempt - 1));
+    if (attempt > 0) {
+      /* A minute-window rejection needs to wait out the minute; anything else
+         is a normal transient and a short backoff is right. */
+      const wait = lastErr instanceof RateLimitError && lastErr.window === 'minute'
+        ? 62000 : 600 * 2 ** (attempt - 1);
+      await sleep(wait);
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeout);
     try {
@@ -64,17 +89,23 @@ async function apiGet(url, { label = 'request', retries = 3, timeout = 45000 } =
            Surface that reason — it is far more useful than "400". */
         let reason = `HTTP ${res.status}`;
         try { const j = await res.json(); if (j && j.reason) reason = j.reason; } catch (_) {}
+        if (isRateLimit(res.status, reason)) throw new RateLimitError(reason, limitWindow(reason));
         throw new Error(reason);
       }
       const json = await res.json();
-      if (json && json.error) throw new Error(json.reason || 'API error');
+      if (json && json.error) {
+        if (isRateLimit(0, json.reason)) throw new RateLimitError(json.reason, limitWindow(json.reason));
+        throw new Error(json.reason || 'API error');
+      }
       diagEnd(entry, 'ok', attempt ? `succeeded on retry ${attempt}` : '');
       return json;
     } catch (err) {
       clearTimeout(timer);
       lastErr = err;
-      /* A rejected parameter will be rejected again — do not burn retries. */
+      /* A rejected parameter will be rejected again — do not burn retries.
+         An hour or day quota likewise will not clear within a retry loop. */
       const msg = String(err && err.message || err);
+      if (err instanceof RateLimitError && err.window !== 'minute') break;
       if (/cannot be|not supported|invalid|unknown|out of|allowed/i.test(msg)) break;
     }
   }
@@ -357,7 +388,7 @@ function clearOurCache() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { API, apiGet, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
+  module.exports = { API, apiGet, RateLimitError, isRateLimit, limitWindow, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
                      fetchMarineArchive, decadeChunks, mergeDaily, hourlyToDaily,
                      ARCHIVE_CORE, ARCHIVE_EXT, DIAG, cacheGet, cacheSet, cacheKey, clearOurCache };
 }
