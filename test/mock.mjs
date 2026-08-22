@@ -160,7 +160,27 @@ export function forecastResponse(url) {
       pressure_msl: 1015.3, surface_pressure: 1013.1, wind_speed_10m: 9.4,
       wind_direction_10m: 214, wind_gusts_10m: 17.2
     },
-    current_units: { temperature_2m: '°F' },
+    current_units: {
+      time: 'iso8601', temperature_2m: '°F', relative_humidity_2m: '%',
+      apparent_temperature: '°F', precipitation: 'inch', rain: 'inch', showers: 'inch',
+      snowfall: 'inch', cloud_cover: '%', pressure_msl: 'hPa', surface_pressure: 'hPa',
+      wind_speed_10m: 'mph', wind_direction_10m: '°', wind_gusts_10m: 'mph'
+    },
+    hourly_units: {
+      time: 'iso8601', temperature_2m: '°F', relative_humidity_2m: '%', dew_point_2m: '°F',
+      apparent_temperature: '°F', precipitation_probability: '%', precipitation: 'inch',
+      cloud_cover: '%', visibility: 'ft', wind_speed_10m: 'mph', wind_gusts_10m: 'mph',
+      wind_direction_10m: '°', uv_index: ''
+    },
+    daily_units: {
+      time: 'iso8601', temperature_2m_max: '°F', temperature_2m_min: '°F',
+      apparent_temperature_max: '°F', apparent_temperature_min: '°F',
+      daylight_duration: 's', sunshine_duration: 's', uv_index_max: '',
+      precipitation_sum: 'inch', rain_sum: 'inch', showers_sum: 'inch', snowfall_sum: 'inch',
+      precipitation_hours: 'h', precipitation_probability_max: '%',
+      wind_speed_10m_max: 'mph', wind_gusts_10m_max: 'mph', wind_direction_10m_dominant: '°'
+    },
+    elevation: 5,
     daily, hourly
   };
 }
@@ -236,6 +256,41 @@ export function alertsResponse(url, alerts = null) {
       }] : []);
   return { type: 'FeatureCollection',
     features: list.map((p, i) => ({ id: `urn:oid:test.${i}`, type: 'Feature', properties: p })) };
+}
+
+/* NOAA CO-OPS water-temperature reading. */
+export function coopsResponse(url, tempF = 78.4) {
+  const st = new URL(url).searchParams.get('station');
+  return { metadata: { id: st, name: 'Test Gauge' },
+           data: [{ t: new Date().toISOString().slice(0, 16).replace('T', ' '), v: String(tempF), f: '0,0,0' }] };
+}
+
+/* NWS chained endpoints: /points → /stations → /observations/latest.
+   Values are SI with explicit unitCodes, exactly as the real API returns them,
+   so the tests exercise the conversion rather than a pre-converted number. */
+export function nwsResponse(url) {
+  const u = String(url);
+  if (u.includes('/points/'))
+    return { properties: { gridId: 'ILM', gridX: 70, gridY: 60,
+      observationStations: 'https://api.weather.gov/gridpoints/ILM/70,60/stations' } };
+  if (u.endsWith('/stations'))
+    return { features: [{ id: 'https://api.weather.gov/stations/KCRE',
+      properties: { stationIdentifier: 'KCRE', name: 'North Myrtle Beach Grand Strand Airport' } }] };
+  if (u.includes('/observations/latest'))
+    return { properties: {
+      timestamp: new Date().toISOString(),
+      textDescription: 'Partly Cloudy',
+      temperature:        { value: 30.0,   unitCode: 'wmoUnit:degC' },   /* = 86.0 °F */
+      dewpoint:           { value: 18.9,   unitCode: 'wmoUnit:degC' },   /* = 66.0 °F */
+      relativeHumidity:   { value: 64,     unitCode: 'wmoUnit:percent' },
+      windSpeed:          { value: 16.092, unitCode: 'wmoUnit:km_h-1' }, /* = 10.0 mph */
+      windGust:           { value: 32.187, unitCode: 'wmoUnit:km_h-1' }, /* = 20.0 mph */
+      windDirection:      { value: 215,    unitCode: 'wmoUnit:degree_(angle)' },
+      barometricPressure: { value: 101325, unitCode: 'wmoUnit:Pa' },     /* = 29.92 inHg */
+      visibility:         { value: 16093.44, unitCode: 'wmoUnit:m' },    /* = 10.0 mi */
+      heatIndex:          { value: 32.2,   unitCode: 'wmoUnit:degC' }    /* = 90.0 °F */
+    } };
+  return {};
 }
 
 export function airResponse(url) {

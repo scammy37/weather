@@ -32,10 +32,10 @@ const API = {
 
 const UNITS = 'temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch';
 
-/* ERA5 runs on a ~28 km grid, so a coastal cell blends land and sea and drags
+/* ERA5 runs on a ~17 mile grid, so a coastal cell blends land and sea and drags
    summer maxima down — the first build had North Myrtle Beach at an 86°F July
    high against a published ~89°F, and 6 days a year over 90°F against a real
-   20–30. ERA5-Land is ~9 km and land-only, which should place these homes
+   20–30. ERA5-Land is ~5.6 miles and land-only, which should place these homes
    properly. It is requested first and the default model is the fallback, so a
    variable ERA5-Land does not carry can never blank the dashboard. */
 const ARCHIVE_MODEL = 'era5_land';
@@ -234,6 +234,78 @@ async function fetchAlerts(loc) {
 }
 
 const SEVERITY_RANK = ['Extreme', 'Severe', 'Moderate', 'Minor', 'Unknown'];
+
+/* -----------------------------------------------------------------------------
+   BACKUP SOURCE 1 — National Weather Service current observations.
+
+   Open-Meteo is a model; this is a thermometer at a nearby airport. It is used
+   when the forecast API fails, and is always available as a cross-check, so a
+   single provider outage does not blank the page.
+
+   Three chained calls (point → stations → latest observation), so it is only
+   attempted on demand rather than on every load.
+   --------------------------------------------------------------------------- */
+async function fetchNWSObservation(loc) {
+  const pt = await apiGet(`https://api.weather.gov/points/${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`,
+    { label: `NWS grid point — ${loc.name}`, retries: 1, timeout: 15000 });
+  const stationsUrl = pt && pt.properties && pt.properties.observationStations;
+  if (!stationsUrl) throw new Error('no observation stations for this point');
+
+  const st = await apiGet(stationsUrl, { label: `NWS stations — ${loc.name}`, retries: 1, timeout: 15000 });
+  const first = st && st.features && st.features[0];
+  if (!first) throw new Error('station list was empty');
+
+  const obs = await apiGet(`${first.id}/observations/latest`,
+    { label: `NWS observation — ${first.properties.stationIdentifier}`, retries: 1, timeout: 15000 });
+  const p = (obs && obs.properties) || {};
+
+  /* NWS reports SI with an explicit unitCode per field, so each value is
+     converted from what it declares rather than from an assumption. */
+  const val = (o, conv) => (o && o.value != null) ? conv(o.value, o.unitCode) : null;
+  return {
+    source: 'NWS',
+    station: first.properties.stationIdentifier,
+    stationName: first.properties.name,
+    time: p.timestamp || null,
+    temperature_2m: val(p.temperature, toFahrenheit),
+    apparent_temperature: val(p.heatIndex, toFahrenheit) ?? val(p.windChill, toFahrenheit)
+                       ?? val(p.temperature, toFahrenheit),
+    relative_humidity_2m: p.relativeHumidity && p.relativeHumidity.value != null
+      ? Math.round(p.relativeHumidity.value) : null,
+    dew_point_2m: val(p.dewpoint, toFahrenheit),
+    wind_speed_10m: val(p.windSpeed, toMph),
+    wind_gusts_10m: val(p.windGust, toMph),
+    wind_direction_10m: p.windDirection && p.windDirection.value != null ? p.windDirection.value : null,
+    pressure_msl: val(p.barometricPressure, toInHg),
+    visibility_mi: val(p.visibility, toMiles),
+    description: p.textDescription || ''
+  };
+}
+
+/* -----------------------------------------------------------------------------
+   BACKUP SOURCE 2 — NOAA CO-OPS water temperature.
+
+   A physical sensor on a tide gauge, as opposed to the marine model's grid
+   cell. Where both are available the page shows the measurement and treats the
+   model as corroboration, because for "can I swim in it" a thermometer beats
+   an interpolation.
+   --------------------------------------------------------------------------- */
+async function fetchWaterTempNOAA(loc) {
+  const station = loc.marine && loc.marine.coopsStation;
+  if (!station) throw new Error('no tide station configured');
+  const url = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter'
+    + `?product=water_temperature&station=${station}&date=latest`
+    + '&units=english&time_zone=lst_ldt&format=json&application=tri-state-weather-dashboard';
+  const j = await apiGet(url, { label: `NOAA water temp — ${loc.marine.coopsName}`, retries: 1, timeout: 15000 });
+  if (j && j.error) throw new Error(j.error.message || 'station returned an error');
+  const row = j && j.data && j.data[0];
+  const v = row ? parseFloat(row.v) : NaN;
+  if (!Number.isFinite(v)) throw new Error('no reading returned');
+  /* units=english means Fahrenheit; a wild value means the sensor is faulty
+     rather than that the water is. */
+  if (v < 25 || v > 105) throw new Error(`implausible reading ${v}°F`);
+  return { source: 'NOAA CO-OPS', station, name: loc.marine.coopsName, tempF: v, time: row.t || null };
+}
 
 /* -----------------------------------------------------------------------------
    LIVE MARINE — sea-surface temperature and waves at the offshore point.
@@ -485,7 +557,8 @@ function clearOurCache() {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { API, apiGet, setPacing, coverage, ARCHIVE_MODEL, SEVERITY_RANK,
-                     RateLimitError, isRateLimit, limitWindow, fetchAlerts, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
+                     RateLimitError, isRateLimit, limitWindow, fetchAlerts, fetchLive,
+                     fetchNWSObservation, fetchWaterTempNOAA, fetchAir, fetchMarineLive, fetchArchive,
                      fetchMarineArchive, decadeChunks, mergeDaily, hourlyToDaily,
                      ARCHIVE_CORE, ARCHIVE_EXT, DIAG, cacheGet, cacheSet, cacheKey, clearOurCache };
 }

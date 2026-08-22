@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tri State Weather">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tri-State Weather">
   <rect width="512" height="512" rx="96" fill="#123a5f"/>
   <circle cx="188" cy="186" r="66" fill="#eda100"/>
   <g fill="#fcfcfb">

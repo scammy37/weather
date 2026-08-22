@@ -20,7 +20,7 @@ const MIN_DAYS_FOR_MONTH = 25;
 
 /* Thresholds, all in the display units requested from the API (°F / inches). */
 const TH = {
-  wetDay:       0.04,   // 1 mm — the WMO "rain day" convention
+  wetDay:       0.04,   // the WMO "rain day" convention, in inches
   heavyRainDay: 1.00,
   snowDay:      0.10,
   sunnyRatio:   0.70,   // sunshine ÷ daylight

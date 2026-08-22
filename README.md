@@ -1,4 +1,4 @@
-# 🏡 Tri State Weather
+# 🏡 Tri-State Weather
 
 Live weather and monthly climate normals for three homes, on one page.
 
@@ -93,6 +93,8 @@ from [Open-Meteo](https://open-meteo.com/) — free, no API key, no account.
 | Air quality | Open-Meteo Air Quality API (CAMS), US AQI scale |
 | Sunrise, sunset, solar noon, daylight | computed locally — NOAA solar equations |
 | Severe weather alerts | US National Weather Service (api.weather.gov) |
+| Water temperature | NOAA CO-OPS tide gauges — a physical sensor, preferred over the model |
+| Backup for current conditions | Nearest National Weather Service station observation |
 | Accuracy check | NOAA NCEI 1991–2020 station normals |
 
 The normals are **precomputed and committed** to `data/climate.json`, so opening
@@ -174,7 +176,7 @@ are one click away when the fuller record is what you want.
 
 ### How accurate is this, actually?
 
-ERA5 runs on a ~28 km grid. A coastal cell mixes land and sea, which pulls
+ERA5 runs on a ~17 mile grid. A coastal cell mixes land and sea, which pulls
 summer maxima down — the first build had North Myrtle Beach at an 86°F July high
 against a published ~89°F, and 6 days a year over 90°F against a real 20–30.
 
@@ -183,8 +185,8 @@ compares three sources over the **identical** 1991–2020 window, so model bias 
 isolated from the real warming between periods:
 
 1. **NOAA NCEI monthly normals** — gauge observations, ground truth
-2. **Open-Meteo `era5`** — ~28 km
-3. **Open-Meteo `era5_land`** — ~9 km, land only
+2. **Open-Meteo `era5`** — ~17 mile grid
+3. **Open-Meteo `era5_land`** — ~5.6 mile grid, land only
 
 It reports the mean bias per home per variable and names which model sits closer,
 writing the result to `data/validation.json` for the dashboard to display. The
@@ -195,11 +197,34 @@ nulls over water, and that is better caught than published.
 The check runs in CI after every rebuild and never fails the build; a NOAA outage
 should not block a good climate refresh.
 
+### Units
+
+Everything is imperial: °F, inches, miles, feet, mph, inHg.
+
+Nothing assumes a unit. Open-Meteo declares its units in every response
+(`current_units`, `hourly_units`, `daily_units`) and NWS tags each field with a
+`unitCode`; `js/units.js` converts from whatever the API actually said. An
+unrecognised unit yields "—" and a diagnostic entry rather than a number in the
+wrong scale — visibility alone differs by 3.28× between metres and feet, and
+both produce a plausible-looking mileage.
+
+The sources panel lists the units received in that session, so the conversion is
+inspectable rather than trusted.
+
+### Redundancy
+
+| If this fails | This takes over |
+|---|---|
+| Open-Meteo forecast | Nearest NWS station observation (chained `/points` → `/stations` → `/observations/latest`) |
+| Open-Meteo marine model | NOAA CO-OPS tide gauge — and where both work, the gauge wins and the model is shown beside it as a cross-check |
+| Precomputed normals | Built live in the browser, with the cost stated |
+| NOAA validation | Skipped; the build still completes |
+
 ### Definitions used
 
 | Term | Definition |
 |---|---|
-| Wet day | ≥ 0.04 in (1 mm) of precipitation — the WMO "rain day" threshold |
+| Wet day | ≥ 0.04 in of precipitation — the WMO "rain day" threshold |
 | Heavy rain day | ≥ 1 in of precipitation |
 | Snow day | ≥ 0.1 in of snowfall |
 | Sunny day | sunshine ≥ 70% of that day's daylight |
@@ -237,7 +262,11 @@ way everywhere rather than implying otherwise.
 | `sw.js` | Service worker — PWA install and offline shell |
 | `manifest.json`, `icon.svg` | PWA metadata and icon |
 | `serve.py` | Local static server |
-| `test/unit.mjs` | 71 assertions on the aggregation maths |
+| `test/globals.mjs` | Guards against two js/ files declaring the same global — they share one scope |
+| `test/units.mjs` | 49 assertions on every conversion factor, against NIST exact values |
+| `test/unit.mjs` | 94 assertions on the aggregation maths |
+| `test/audit.mjs` | Reads back every rendered value and checks its unit and plausible range |
+| `test/spot-check.mjs` | The real committed data against published climate values for these three places |
 | `test/e2e.mjs` | 146 browser assertions across 27 groups, against mocked Open-Meteo and NWS |
 | `test/build-script.mjs` | 41 assertions on the precompute script, its quota maths and merge behaviour |
 | `test/validate-script.mjs` | 13 assertions on the bias maths, including that the verdict flips when the models swap places |

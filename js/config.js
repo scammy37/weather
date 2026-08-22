@@ -25,7 +25,10 @@ const LOCATIONS = [
       lon: -78.62,
       proxy: false,
       label: 'Atlantic Ocean — offshore North Myrtle Beach',
-      body: 'Atlantic Ocean'
+      body: 'Atlantic Ocean',
+      /* NOAA CO-OPS tide gauge with a water-temperature sensor: a real
+         thermometer in the water, used to cross-check the marine model. */
+      coopsStation: '8661070', coopsName: 'Springmaid Pier, SC'
     }
   },
   {
@@ -46,7 +49,8 @@ const LOCATIONS = [
       lon: -81.90,
       proxy: false,
       label: 'Gulf of Mexico — offshore Bonita Beach',
-      body: 'Gulf of Mexico'
+      body: 'Gulf of Mexico',
+      coopsStation: '8725110', coopsName: 'Naples Bay, FL'
     }
   },
   {
@@ -69,7 +73,8 @@ const LOCATIONS = [
       proxyName: 'Point Pleasant Beach',
       proxyDistanceMi: 55,
       label: 'Atlantic Ocean — off Point Pleasant Beach (nearest coast, ~55 mi)',
-      body: 'Atlantic Ocean'
+      body: 'Atlantic Ocean',
+      coopsStation: '8531680', coopsName: 'Sandy Hook, NJ'
     }
   }
 ];
@@ -130,7 +135,7 @@ const METRICS = [
 
   { key:'precipTotal',  label:'Total Precipitation', unit:'in',   dec:2, group:'water', better:null, color:'#0284c7', desc:'Mean monthly precipitation — rain plus melted snow' },
   { key:'rainfall',     label:'Avg Rainfall',        unit:'in',   dec:2, group:'water', better:null, color:'#38bdf8', desc:'Mean monthly liquid rain only, snow excluded' },
-  { key:'wetDays',      label:'Avg Wet Days',        unit:'days', dec:1, group:'water', better:null, color:'#0369a1', desc:'Days with ≥ 0.04 in (1 mm) of precipitation' },
+  { key:'wetDays',      label:'Avg Wet Days',        unit:'days', dec:1, group:'water', better:null, color:'#0369a1', desc:'Days with ≥ 0.04 in of precipitation — the WMO rain-day threshold' },
   { key:'heavyRainDays',label:'Heavy Rain Days',     unit:'days', dec:1, group:'water', better:null, color:'#075985', desc:'Days with ≥ 1 in of precipitation' },
   { key:'dryDays',      label:'Avg Dry Days',        unit:'days', dec:1, group:'water', better:null, color:'#ca8a04', desc:'Days with < 0.04 in of precipitation' },
   { key:'precipHours',  label:'Precip Hours',        unit:'hrs',  dec:1, group:'water', better:null, color:'#1e40af', desc:'Mean monthly hours with precipitation falling' },

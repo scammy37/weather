@@ -6,7 +6,8 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { archiveResponse, forecastResponse, marineResponse, airResponse, alertsResponse } from './mock.mjs';
+import { archiveResponse, forecastResponse, marineResponse, airResponse, alertsResponse,
+         coopsResponse, nwsResponse } from './mock.mjs';
 import { createRequire } from 'module';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,7 +80,9 @@ async function main() {
   /* Hide the committed snapshot from this context: these sections test the
      path taken when no precomputed data is available. Section 19 covers the
      snapshot path with the fixture served explicitly. */
-  await page.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await page.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await page.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await page.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await page.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page.route('**://api.open-meteo.com/**',        r => { calls.forecast++;   json(r, forecastResponse(r.request().url())); });
   await page.route('**://air-quality-api.open-meteo.com/**', r => { calls.air++;   json(r, airResponse(r.request().url())); });
@@ -334,7 +337,9 @@ async function main() {
 
   console.log('\n\x1b[1m16. Failure handling\x1b[0m');
   const page2 = await (await browser.newContext(CTX)).newPage();
-  await page2.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await page2.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await page2.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await page2.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page2.route('**://*.open-meteo.com/**', r => r.abort('failed'));
   await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
@@ -365,7 +370,9 @@ async function main() {
 
   console.log('\n\x1b[1m17. Partial failure — archive up, marine down\x1b[0m');
   const page3 = await (await browser.newContext(CTX)).newPage();
-  await page3.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await page3.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await page3.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await page3.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await page3.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page3.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await page3.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -383,7 +390,9 @@ async function main() {
 
   console.log('\n\x1b[1m18. Mobile layout\x1b[0m');
   const m = await (await browser.newContext({ ...CTX, viewport: { width: 390, height: 844 } })).newPage();
-  await m.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await m.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await m.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await m.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await m.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await m.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await m.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -442,6 +451,58 @@ async function main() {
      (await page.$$eval('tbody .wk', rows => rows.every(r => r.querySelectorAll('.wk-d').length === 7))));
   ok('no NaN in the ranking', !wkTxt.includes('NaN'));
 
+  console.log('\n\x1b[1m18d. Units come from the API, not from assumptions\x1b[0m');
+  await page.click('.tab[data-id="nmb"]');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
+  const statTxt = await page.textContent('#liveHost');
+  /* The mock declares visibility in feet; 52000 ft is 9.8 mi, not 32 mi. */
+  const visMatch = /([\d.]+) mi/.exec(statTxt);
+  ok('visibility is converted from the declared unit', visMatch != null, statTxt.slice(0, 60));
+  ok('and lands in a physically plausible range',
+     visMatch && +visMatch[1] > 0 && +visMatch[1] < 250, visMatch && visMatch[1]);
+  ok('the tile states which unit the API reported', statTxt.includes('reported in'));
+  const diagTxt = await page.textContent('#sourceNotes');
+  ok('the sources panel audits the units received', diagTxt.includes('every figure is converted from the unit the API declares'.slice(0, 30)) || diagTxt.includes('Units'));
+  ok('and lists the declared units for this session', /temperature\s*°F|temperature .?F/.test(diagTxt), diagTxt.slice(diagTxt.indexOf('Units'), diagTxt.indexOf('Units') + 130));
+  ok('no kilometres anywhere on the page',
+     !(await page.textContent('body')).match(/\d\s?km\b/), 'found a km measurement');
+  ok('elevation is shown in feet', /\d+ ft above sea level/.test(statTxt));
+
+  console.log('\n\x1b[1m18e. Backup data sources\x1b[0m');
+  ok('the measured water temperature is preferred over the model',
+     statTxt.includes('measured at'), statTxt.slice(statTxt.indexOf('Water temp'), statTxt.indexOf('Water temp') + 90));
+  ok('the model is shown against the gauge as a cross-check',
+     statTxt.includes('Model vs gauge'));
+  ok('the sources panel names the tide gauge', diagTxt.includes('NOAA CO-OPS'));
+  ok('and names the backup provider', diagTxt.includes('Backup provider'));
+
+  /* Open-Meteo down, everything else up: the page must fall back, not blank. */
+  const fbCtx = await browser.newContext(CTX);
+  const fb = await fbCtx.newPage();
+  await fb.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await fb.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await fb.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
+  await fb.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'nf' }));
+  await fb.route('**://*.open-meteo.com/**', r => r.abort('failed'));
+  await fb.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
+  await fb.waitForSelector('#app:not([hidden])', { timeout: 60000 });
+  await fb.click('.tab[data-id="nmb"]');
+  await fb.waitForSelector('.stat-grid', { timeout: 30000 });
+  const fbTxt = await fb.textContent('#liveHost');
+  ok('falls back to the NWS station when Open-Meteo is down', fbTxt.includes('National Weather Service'));
+  ok('and names the station it used', fbTxt.includes('KCRE') || fbTxt.includes('Grand Strand'));
+  ok('30.0°C from NWS renders as 86°F', /86°F/.test(fbTxt), fbTxt.replace(/\s+/g, ' ').slice(250, 420));
+  ok('16.092 km/h renders as 10 mph', /10 mph/.test(fbTxt));
+  ok('101325 Pa renders as 29.92 inHg', fbTxt.includes('29.92'));
+  ok('16093.44 m renders as 10.0 mi', /10\.0 mi/.test(fbTxt));
+  ok('18.9°C dew point renders as 66°F', /66°F/.test(fbTxt));
+  ok('the water gauge still works during the outage',
+     fbTxt.includes('Water temp') && /78\.4°F/.test(fbTxt), 'measured water temp missing');
+  ok('it is honest that the forecast is unavailable', fbTxt.includes('Open-Meteo is unavailable'));
+  await fbCtx.close();
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
+
   console.log('\n\x1b[1m19. Precomputed snapshot — the page must not hit the archive at all\x1b[0m');
   /* Build a snapshot the same way scripts/build-climate.mjs does, serve it, and
      assert the archive is never touched. This is the whole point of the fix. */
@@ -451,7 +512,9 @@ async function main() {
 
   const snapCtx = await browser.newContext(CTX);
   const sp = await snapCtx.newPage();
-  await sp.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await sp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await sp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await sp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await sp.route('**/data/climate.json', serveSnapshot(fixture));
   let archiveHits = 0, marineArchiveHits = 0;
   await sp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
@@ -482,7 +545,9 @@ async function main() {
   const partial = JSON.parse(JSON.stringify(fixture));
   for (const h of Object.values(partial.homes)) delete h[missingPeriod];
   const sp2 = await snapCtx.newPage();
-  await sp2.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await sp2.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await sp2.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await sp2.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await sp2.route('**/data/climate.json', serveSnapshot(partial));
   let archiveHits2 = 0;
   await sp2.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
@@ -504,7 +569,9 @@ async function main() {
   console.log('\n\x1b[1m20. Rate-limit handling\x1b[0m');
   const rlCtx = await browser.newContext(CTX);
   const rp = await rlCtx.newPage();
-  await rp.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await rp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await rp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await rp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await rp.route('**/data/climate.json', serveSnapshot(partial));
   await rp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await rp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -564,7 +631,9 @@ async function main() {
   console.log('\n\x1b[1m21. Time zones — a viewer in Denver reading East Coast homes\x1b[0m');
   const tzCtx = await browser.newContext({ ...CTX, timezoneId: 'America/Denver' });
   const tzp = await tzCtx.newPage();
-  await tzp.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
+  await tzp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+  await tzp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
+  await tzp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await tzp.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await tzp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await tzp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));

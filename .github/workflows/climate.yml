@@ -147,3 +147,9 @@ jobs:
             echo "::error::data/climate.json is NOT on main. The build produced data but it never landed."
             exit 1
           fi
+
+      - name: Spot-check the numbers against published climate values
+        # Deliberately the LAST step: data that is slightly off is still better
+        # than stale data, so it lands either way — but the run goes red so a
+        # wrong model or a unit slip is impossible to miss.
+        run: node test/spot-check.mjs

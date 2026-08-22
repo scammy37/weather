@@ -203,19 +203,27 @@ function selectMonth(m) {
 async function loadAllLive(force) {
   const jobs = LOCATIONS.map(async (l, i) => {
     try {
-      const [wx, air, marine, alerts] = await Promise.all([
+      const [wx, air, marine, alerts, water] = await Promise.all([
         fetchLive(l),
         fetchAir(l).catch(() => null),
         fetchMarineLive(l).catch(() => null),
-        fetchAlerts(l).catch(() => null)
+        fetchAlerts(l).catch(() => null),
+        /* A measured water temperature, alongside the model's. */
+        fetchWaterTempNOAA(l).catch(() => null)
       ]);
-      S.live[l.id] = { wx, air, marine, alerts, at: Date.now(), error: null };
+      S.live[l.id] = { wx, air, marine, alerts, water, at: Date.now(), error: null, source: 'Open-Meteo' };
     } catch (err) {
-      /* Alerts are worth having even when the forecast fails — a hurricane
-         warning does not stop mattering because a temperature did not load. */
-      const alerts = await fetchAlerts(l).catch(() => null);
-      S.live[l.id] = { wx: null, air: null, marine: null, alerts, at: Date.now(),
-                       error: String(err && err.message || err) };
+      /* Open-Meteo is down for this home. Fall back to a second provider
+         rather than showing nothing: NWS has a real thermometer nearby, and
+         alerts and water temperature come from elsewhere entirely. */
+      const [alerts, water, nws] = await Promise.all([
+        fetchAlerts(l).catch(() => null),
+        fetchWaterTempNOAA(l).catch(() => null),
+        fetchNWSObservation(l).catch(() => null)
+      ]);
+      S.live[l.id] = { wx: null, air: null, marine: null, alerts, water, nws, at: Date.now(),
+                       error: String(err && err.message || err),
+                       source: nws ? 'NWS (fallback)' : null };
     }
     boot(null, 10 + ((i + 1) / LOCATIONS.length) * 45, `${l.name} done`);
   });
@@ -225,8 +233,41 @@ async function loadAllLive(force) {
 /* ---------------------------------------------------------------------------
    Live rendering
    ------------------------------------------------------------------------- */
+/* Elevation as the API reports it for these exact coordinates, converted from
+   whatever unit it names. Falls back to the surveyed value in config.js. */
+function elevationFt(l, d) {
+  const raw = d && d.wx && d.wx.elevation;
+  const ft = toFeet(raw, unitOf(d && d.wx, 'elevation', 'elevation') || 'm', 'elevation');
+  if (ft != null && ft > -500 && ft < 30000) return `${Math.round(ft)} ft`;
+  return `${l.elevationFt} ft`;
+}
+
+/* Confirms the API answered in the units we asked for. Anything unexpected is
+   converted properly AND recorded, so a changed default shows up in the
+   diagnostics panel rather than as a quietly wrong number. */
+function verifyUnits(wx) {
+  if (!wx) return;
+  const checks = [
+    ['current', 'temperature_2m',   '°F',   'temperature'],
+    ['current', 'wind_speed_10m',   'mph',  'wind speed'],
+    ['daily',   'temperature_2m_max','°F',  'daily high'],
+    ['daily',   'precipitation_sum','inch', 'precipitation'],
+    ['daily',   'snowfall_sum',     'inch', 'snowfall'],
+    ['hourly',  'temperature_2m',   '°F',   'hourly temperature']
+  ];
+  for (const [block, key, want, label] of checks) {
+    const got = unitOf(wx, block, key);
+    if (got == null) continue;
+    if (normUnit(got) !== normUnit(want)) {
+      const msg = `${label}: API returned ${got}, expected ${want} — converted on read`;
+      if (!UNIT_WARNINGS.includes(msg)) UNIT_WARNINGS.push(msg);
+    }
+  }
+}
+
 function renderLive() {
   const l = loc(), d = S.live[l.id];
+  if (d && d.wx) verifyUnits(d.wx);
   const host = $('liveHost');
   host.innerHTML = '';
 
@@ -242,10 +283,17 @@ function renderLive() {
   if (isAll()) { renderOverview(host); return; }
 
   if (!d || d.error || !d.wx) {
-    host.appendChild(el('div', 'banner err',
-      `<span class="bico">⚠️</span><div><b>Live feed unavailable for ${esc(l.name)}</b>
+    host.appendChild(el('div', 'banner ' + (d && d.nws ? 'warn' : 'err'),
+      `<span class="bico">${d && d.nws ? '🛟' : '⚠️'}</span><div>
+       <b>Open-Meteo is unavailable for ${esc(l.name)}.</b>
        ${esc(d && d.error || 'No response from the forecast API.')}
-       <br>The monthly normals below are unaffected. Use <b>↻ Refresh live</b> to try again.</div>`));
+       ${d && d.nws
+         ? `<br>Showing the latest National Weather Service observation from
+            ${esc(d.nws.stationName || d.nws.station)} instead. The forecast and hourly charts
+            need Open-Meteo and are unavailable until it returns.`
+         : '<br>The monthly normals below are unaffected. Use <b>↻ Refresh live</b> to try again.'}
+       </div>`));
+    if (d && d.nws) host.appendChild(nwsFallbackPanel(l, d));
     return;
   }
 
@@ -284,7 +332,7 @@ function renderLive() {
     </div>
     ${sunArc(nowMin, sunriseMin, sunsetMin)}
     <div class="now-place" style="margin-top:auto">🌎 ${esc(l.blurb)}</div>
-    <div class="now-place">📍 ${l.lat.toFixed(3)}°N, ${Math.abs(l.lon).toFixed(3)}°W · ${l.elevationFt} ft above sea level</div>
+    <div class="now-place">📍 ${l.lat.toFixed(3)}°N, ${Math.abs(l.lon).toFixed(3)}°W · ${esc(elevationFt(l, d))} above sea level</div>
     <div class="now-place">🕐 Observed ${esc(fmtClock(cur.time, l.tz))} local · updated ${esc(relTime(d.at))}</div>`;
   grid.appendChild(now);
 
@@ -292,6 +340,17 @@ function renderLive() {
   const stats = el('div');
   const uvNow = pickHourly(hourly, 'uv_index', l.tz);
   const visNow = pickHourly(hourly, 'visibility', l.tz);
+  /* Visibility is the one field where a wrong assumption is invisible: metres
+     and feet differ by 3.28x and both produce a plausible-looking mileage. The
+     unit is read from the payload, and an implausible result is reported as
+     such rather than displayed. */
+  const visUnit = unitOf(d.wx, 'hourly', 'visibility');
+  let visMi = toMiles(visNow, visUnit, 'live visibility');
+  let visNote = visUnit ? `Surface · reported in ${visUnit}` : 'Surface';
+  if (visMi != null && (visMi < 0 || visMi > 250)) {
+    visNote = `implausible (${fmtNum(visNow, 0)} ${esc(String(visUnit))}) — not shown`;
+    visMi = null;
+  }
   const dewNow = pickHourly(hourly, 'dew_point_2m', l.tz);
   const aqi = d.air && d.air.current ? d.air.current.us_aqi : null;
 
@@ -299,9 +358,9 @@ function renderLive() {
     ['Humidity',      fmtNum(cur.relative_humidity_2m, 0) + '%',            'Relative'],
     ['Dew point',     fmtNum(dewNow, 0) + '°F',                              dewLabel(dewNow)],
     ['Wind',          `${fmtNum(cur.wind_speed_10m, 0)} mph`,               `${degToCompass(cur.wind_direction_10m)} · gusts ${fmtNum(cur.wind_gusts_10m, 0)}`],
-    ['Pressure',      fmtNum(cur.pressure_msl != null ? cur.pressure_msl * 0.02953 : null, 2) + ' inHg', 'Sea level'],
+    ['Pressure',      fmtNum(toInHg(cur.pressure_msl, unitOf(d.wx, 'current', 'pressure_msl'), 'live pressure'), 2) + ' inHg', 'Sea level'],
     ['Cloud cover',   fmtNum(cur.cloud_cover, 0) + '%',                      cloudLabel(cur.cloud_cover)],
-    ['Visibility',    visNow != null ? `${(visNow / 5280).toFixed(1)} mi` : '—', 'Surface'],
+    ['Visibility',    visMi != null ? `${visMi.toFixed(1)} mi` : '—', visNote],
     ['UV index',      fmtNum(uvNow, 1),                                      uvLabel(uvNow)],
     ['Precip today',  `${fmtNum(daily.precipitation_sum?.[ti], 2)} in`,      `${fmtNum(daily.precipitation_probability_max?.[ti], 0)}% chance`],
     ['Sunrise',       fmtMinutes(sunriseMin),                                'NOAA solar calc'],
@@ -317,12 +376,23 @@ function renderLive() {
 
   /* --- ocean --- */
   const m = l.marine, mc = d.marine && d.marine.current;
+  const gauge = d.water;                       /* `w` is the weather code above */
   const oceanTiles = mc ? [
-    ['Water temp',  fmtNum(mc.sea_surface_temperature, 1) + '°F', swimLabel(mc.sea_surface_temperature)],
+    ['Water temp',  fmtNum(gauge ? gauge.tempF : mc.sea_surface_temperature, 1) + '°F',
+      gauge ? `measured at ${gauge.name}` : swimLabel(mc.sea_surface_temperature)],
     ['Wave height', fmtNum(mc.wave_height, 1) + ' ft',            'Significant height'],
     ['Wave period', fmtNum(mc.wave_period, 1) + ' s',             'Between crests'],
     ['Swell from',  degToCompass(mc.wave_direction),              `${fmtNum(mc.wave_direction, 0)}°`]
-  ] : null;
+  ] : (d.water ? [['Water temp', `${fmtNum(d.water.tempF, 1)}°F`, `measured at ${d.water.name}`]] : null);
+  /* Where both a gauge and the model are available, show the gap: agreement is
+     reassuring and disagreement is worth knowing about. */
+  if (mc && gauge && typeof mc.sea_surface_temperature === 'number') {
+    const gap = gauge.tempF - mc.sea_surface_temperature;
+    oceanTiles.push(['Model vs gauge',
+      `${gap >= 0 ? '+' : ''}${gap.toFixed(1)}°F`,
+      Math.abs(gap) < 2 ? 'model agrees with the sensor'
+        : Math.abs(gap) < 5 ? 'model differs modestly' : 'model and sensor disagree']);
+  }
 
   stats.innerHTML += `
     <div style="margin-top:14px" class="panel">
@@ -609,9 +679,12 @@ function renderOverview(host) {
       ['💨', `${fmtNum(cur.wind_speed_10m, 0)} ${degToCompass(cur.wind_direction_10m)}`, 'Wind mph'],
       ['☁️', `${fmtNum(cur.cloud_cover, 0)}%`, 'Cloud cover']
     ];
-    if (mc && typeof mc.sea_surface_temperature === 'number')
-      chips.push(['🌊', `${fmtNum(mc.sea_surface_temperature, 0)}°`,
-        l.marine.proxy ? `${l.marine.proxyName} — ${l.marine.proxyDistanceMi} mi away` : 'Water temperature']);
+    const waterF = d.water ? d.water.tempF
+      : (mc && typeof mc.sea_surface_temperature === 'number' ? mc.sea_surface_temperature : null);
+    if (waterF != null)
+      chips.push(['🌊', `${fmtNum(waterF, 0)}°`,
+        (d.water ? `measured at ${d.water.name}` : 'marine model')
+        + (l.marine.proxy ? ` — ${l.marine.proxyDistanceMi} mi from this home` : '')]);
 
     card.innerHTML = `
       <div class="ov-head">
@@ -651,6 +724,31 @@ function renderOverview(host) {
   });
   host.appendChild(grid);
   renderWeekAhead(host);
+}
+
+/* What can still be shown from the NWS observation alone. */
+function nwsFallbackPanel(l, d) {
+  const n = d.nws;
+  const wrap = el('section', 'panel');
+  const tiles = [
+    ['Temperature',  n.temperature_2m == null ? '—' : `${Math.round(n.temperature_2m)}°F`, n.description || 'Observed'],
+    ['Feels like',   n.apparent_temperature == null ? '—' : `${Math.round(n.apparent_temperature)}°F`, 'Heat index or wind chill'],
+    ['Humidity',     n.relative_humidity_2m == null ? '—' : `${n.relative_humidity_2m}%`, 'Relative'],
+    ['Dew point',    n.dew_point_2m == null ? '—' : `${Math.round(n.dew_point_2m)}°F`, dewLabel(n.dew_point_2m)],
+    ['Wind',         n.wind_speed_10m == null ? '—' : `${Math.round(n.wind_speed_10m)} mph`, degToCompass(n.wind_direction_10m)],
+    ['Pressure',     n.pressure_msl == null ? '—' : `${n.pressure_msl.toFixed(2)} inHg`, 'Sea level'],
+    ['Visibility',   n.visibility_mi == null ? '—' : `${n.visibility_mi.toFixed(1)} mi`, 'Surface']
+  ];
+  /* NOAA's tide gauge is a different provider entirely, so it survives an
+     Open-Meteo outage. Showing it here rather than dropping it with the rest. */
+  if (d.water) tiles.push(['Water temp', `${fmtNum(d.water.tempF, 1)}°F`,
+    `measured at ${d.water.name}`]);
+  wrap.innerHTML = `<div class="panel-h"><h2>🛟 National Weather Service — ${esc(l.name)}</h2>
+      <span class="note">Station ${esc(n.station)}${n.time ? ` · ${esc(new Date(n.time).toLocaleString())}` : ''}</span></div>
+    <div class="panel-b"><div class="stat-grid">${tiles.map(([a, b, c2]) =>
+      `<div class="stat"><div class="stat-l">${esc(a)}</div><div class="stat-v">${esc(String(b))}</div>
+       <div class="stat-s">${esc(String(c2 || ''))}</div></div>`).join('')}</div></div>`;
+  return wrap;
 }
 
 /* --- 7-day forecast ------------------------------------------------------ */
@@ -1123,7 +1221,7 @@ function renderCharts() {
         Wettest on record ${fmtNum(rows[i].wettestMonthOnRecord,2)} in` })]);
 
   defs.push(['water', false, 'Average wet days',
-    'Days with at least 0.04 in (1 mm) of precipitation — the standard "rain day" threshold.',
+    'Days with at least 0.04 in of precipitation — the WMO standard "rain day" threshold.',
     svg => barChart(svg, { values: vals('wetDays'), labels: MONTHS, color: isDark() ? '#3987e5' : '#2a78d6', unit: 'days', dec: 1, selected: sel, onClick })]);
 
   defs.push(['water', false, 'Dry days',
@@ -1515,15 +1613,43 @@ function renderDiagnostics() {
     <div><b>Live conditions, 7-day forecast and hourly detail</b> — Open-Meteo Forecast API, refreshed on every page load.</div>
     <div><b>Monthly normals</b> — Open-Meteo Historical Weather API (ECMWF <b>ERA5</b> reanalysis family),
       ${PERIODS[S.period].years} years of daily records${c && c.meta && c.meta.model ? `, model <code>${esc(c.meta.model)}</code>` : ''}.
-      ERA5-Land runs on a ~9 km grid and ERA5 on ~28 km; the finer one is requested first because a coastal
-      cell on the coarse grid mixes land and sea and reads a few degrees cool in summer.
+      ERA5-Land runs on a ~5.6 mile grid and ERA5 on ~17 miles; the finer one is requested first because a
+      coastal cell on the coarse grid mixes land and sea and reads a few degrees cool in summer.
       ${c && c.meta && c.meta.modelNote && c.meta.modelNote !== c.meta.model ? `<br><span style="color:var(--muted)">${esc(c.meta.modelNote)}</span>` : ''}</div>
     <div><b>Severe weather alerts</b> — US National Weather Service (api.weather.gov), active watches and warnings for each home's exact coordinates.</div>
+    <div><b>Water temperature</b> — NOAA CO-OPS tide gauge (${esc(l.marine.coopsName || 'n/a')}, station ${esc(l.marine.coopsStation || '—')}),
+      a physical sensor. The marine model is shown alongside it as corroboration.</div>
+    <div><b>Backup provider</b> — if Open-Meteo is unreachable, current conditions fall back to the nearest
+      National Weather Service station observation, so an outage at one provider does not blank the page.</div>
     <div><b>Ocean temperature and waves</b> — Open-Meteo Marine API at ${esc(l.marine.label)}${c && c.meta && c.meta.sst && c.meta.sst.years ? ` · ${c.meta.sst.years} years retrieved` : ''}.</div>
     <div><b>Air quality</b> — Open-Meteo Air Quality API (CAMS), US AQI scale.</div>
     <div><b>Sunrise, sunset, solar noon and daylight</b> — computed locally from the NOAA solar equations, then converted to local clock time with your browser's IANA time-zone database, so daylight saving is handled exactly.</div>
+    <div><b>Units</b> — every figure is converted from the unit the API declares in its own response rather than
+      an assumed one. ${unitAuditLine()}</div>
     <div style="margin-top:8px;color:var(--muted)">${okCount} request${okCount === 1 ? '' : 's'} succeeded, ${failCount} failed this session.
     Normals are cached in this browser for 30 days${c && c.meta && c.meta.built ? ` · this set built ${relTime(c.meta.built)}` : ''}.</div>`;
+}
+
+/* One line summarising what the APIs said their units were, plus anything that
+   did not match expectations. */
+function unitAuditLine() {
+  const d = S.live[loc().id];
+  const bits = [];
+  if (d && d.wx) {
+    for (const [block, key, label] of [
+      ['current', 'temperature_2m', 'temperature'],
+      ['current', 'wind_speed_10m', 'wind'],
+      ['hourly',  'visibility',     'visibility'],
+      ['current', 'pressure_msl',   'pressure'],
+      ['daily',   'precipitation_sum', 'precipitation']
+    ]) {
+      const u = unitOf(d.wx, block, key);
+      if (u) bits.push(`${label} <code>${esc(u)}</code>`);
+    }
+  }
+  const warn = UNIT_WARNINGS.length
+    ? `<br><span style="color:var(--warn)">⚠ ${UNIT_WARNINGS.map(esc).join('; ')}</span>` : '';
+  return (bits.length ? `This session: ${bits.join(', ')}.` : '') + warn;
 }
 
 function renderFooter() {
