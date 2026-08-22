@@ -32,8 +32,10 @@ globalThis.fetch = async (url) => {
 const outPath = path.join(ROOT, 'test', 'shots', 'climate-test.json');
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
-console.log('\n\x1b[1mrunning scripts/build-climate.mjs against the mock\x1b[0m');
-process.argv = [process.argv[0], 'build-climate.mjs', '--pause', '0', '--out', outPath];
+/* The script defaults to the default period only: all three together would
+   cost ~13,000 weighted calls against a 10,000/day cap. `--period all` opts in. */
+console.log('\n\x1b[1mrunning scripts/build-climate.mjs against the mock (--period all)\x1b[0m');
+process.argv = [process.argv[0], 'build-climate.mjs', '--pause', '0', '--period', 'all', '--out', outPath];
 const origExit = process.exit;
 let exitCode = null;
 process.exit = c => { exitCode = c; };            // let the script "exit" without killing us
@@ -52,7 +54,7 @@ ok('has a generated timestamp', typeof j.generated === 'string' && !isNaN(Date.p
 ok('names its source', /Open-Meteo/.test(j.source) && /ERA5/.test(j.source));
 ok('carries all three homes', Object.keys(j.homes).sort().join() === 'bonita,nmb,rockaway',
    Object.keys(j.homes).join());
-ok('carries all three periods per home',
+ok('--period all carries all three periods per home',
    Object.values(j.homes).every(h => Object.keys(h).length === 3),
    JSON.stringify(Object.entries(j.homes).map(([k, v]) => k + ':' + Object.keys(v).length)));
 
@@ -81,6 +83,43 @@ const kb = fs.statSync(outPath).size / 1024;
 ok('file is small enough to serve statically', kb < 3000, `${kb.toFixed(0)} KB`);
 console.log(`  → ${calls} HTTP requests, ~${weighted.toFixed(0)} weighted Open-Meteo calls for the whole build`);
 console.log(`  → output ${kb.toFixed(0)} KB`);
+
+/* Default invocation: one period only, so an unattended monthly run stays
+   inside the daily quota. */
+console.log('\n\x1b[1mdefault invocation stays within the daily quota\x1b[0m');
+const defPath = path.join(ROOT, 'test', 'shots', 'climate-default.json');
+const before = weighted;
+process.argv = [process.argv[0], 'build-climate.mjs', '--pause', '0', '--out', defPath];
+/* The script calls process.exit when it finishes; stub it again or this run
+   takes the test process down with it before the assertions below run. */
+process.exit = c => { exitCode = c; };
+console.log = () => {};
+await import('../scripts/build-climate.mjs?default');
+console.log = origLog;
+process.exit = origExit;
+ok('default invocation completed cleanly', exitCode === 0, `exit ${exitCode}`);
+const dj = JSON.parse(fs.readFileSync(defPath, 'utf8'));
+const cfg = createRequire(import.meta.url)(path.join(ROOT, 'js/config.js'));
+ok('builds only the default period by default',
+   Object.values(dj.homes).every(h => Object.keys(h).length === 1
+     && Object.keys(h)[0] === cfg.DEFAULT_PERIOD),
+   JSON.stringify(Object.values(dj.homes).map(h => Object.keys(h))));
+ok('still covers all three homes', Object.keys(dj.homes).length === 3);
+const defaultCost = weighted - before;
+ok('default run fits inside the 10,000/day free-tier cap', defaultCost < 10000,
+   `${defaultCost.toFixed(0)} weighted calls`);
+/* The raw cost EXCEEDS 5,000, so the hourly cap is only respected because the
+   script spaces its requests out. Assert the paced rate, not the total. */
+const PAUSE_S = 90, httpReqs = 3 * 6 + 3 * 11;      // matches the script's default
+const runtimeHrs = (httpReqs * PAUSE_S) / 3600;
+const perHour = defaultCost / runtimeHrs;
+ok('pacing keeps the rolling hourly rate under 5,000', perHour < 5000,
+   `${perHour.toFixed(0)}/hour over ${(runtimeHrs * 60).toFixed(0)} min`);
+ok('and the raw total would have exceeded it unpaced', defaultCost > 5000,
+   `${defaultCost.toFixed(0)} — pacing is load-bearing, not decorative`);
+console.log(`  → default build costs ~${defaultCost.toFixed(0)} weighted calls`);
+console.log(`  → paced: ~${perHour.toFixed(0)}/hour over ${(runtimeHrs * 60).toFixed(0)} min (cap 5,000/hour)`);
+fs.rmSync(defPath, { force: true });
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

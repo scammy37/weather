@@ -170,7 +170,7 @@ way everywhere rather than implying otherwise.
 | `serve.py` | Local static server |
 | `test/unit.mjs` | 71 assertions on the aggregation maths |
 | `test/e2e.mjs` | 107 browser assertions across 22 groups, against a mocked Open-Meteo |
-| `test/build-script.mjs` | 28 assertions on the precompute script and its output |
+| `test/build-script.mjs` | 34 assertions on the precompute script and its output |
 | `test/mock.mjs` | Synthetic API responses shaped like the real ones |
 
 ---
@@ -188,7 +188,7 @@ A server is required — browsers block `fetch()` from `file://` URLs.
 
 ```bash
 node test/unit.mjs                       # aggregation maths, no network
-node test/build-script.mjs               # precompute script, mocked API
+node test/build-script.mjs               # precompute script + quota maths, mocked API
 npm install --no-save playwright         # first time only
 node test/e2e.mjs                        # full UI, mocked APIs
 node test/e2e.mjs --headed               # watch it run
