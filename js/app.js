@@ -461,17 +461,29 @@ function renderWeekAhead(host) {
   if (scores.length < 2) return;
   const ranked = [...scores].sort((a, b) => b.score - a.score);
   const best = ranked[0];
+  const bestGood = best.beach + best.pleasant;
+  /* A ranking is only worth crowning if the winner is actually good. When no
+     home clears a single beach or pleasant day, saying so is more useful than
+     declaring a winner on a fraction of a point. */
+  const runnerUp = ranked[1];
+  const decisive = runnerUp ? best.score - runnerUp.score >= 1 : true;
 
   const p = el('section', 'panel');
   p.innerHTML = `
     <div class="panel-h"><h2>🏆 Best week ahead</h2>
       <span class="note">Next 7 days, scored on beach-quality and pleasant days</span></div>
     <div class="panel-b">
-      <div class="banner info" style="margin-bottom:14px"><span class="bico">${best.loc.emoji}</span><div>
-        <b>${esc(best.loc.name)} looks like the place to be.</b>
-        ${best.beach} beach-quality day${best.beach === 1 ? '' : 's'} and
-        ${best.pleasant} pleasant day${best.pleasant === 1 ? '' : 's'} in the next week,
-        averaging ${fmtNum(best.avgHigh, 0)}°F.</div></div>
+      <div class="banner info" style="margin-bottom:14px"><span class="bico">${bestGood ? best.loc.emoji : '🤷'}</span><div>
+        ${bestGood === 0
+          ? `<b>None of the three looks especially good this week.</b>
+             No beach-quality or pleasant days anywhere — ${esc(ranked.map(r => `${r.loc.short} ${r.wet} wet`).join(', '))}.
+             The table below still ranks them, for what it is worth.`
+          : `<b>${esc(best.loc.name)} ${decisive ? 'looks like the place to be' : 'edges it, but only just'}.</b>
+             ${best.beach} beach-quality day${best.beach === 1 ? '' : 's'} and
+             ${best.pleasant} pleasant day${best.pleasant === 1 ? '' : 's'} in the next week,
+             averaging ${fmtNum(best.avgHigh, 0)}°F.
+             ${decisive ? '' : `${esc(runnerUp.loc.short)} is within a point of it.`}`}
+      </div></div>
       <div class="tscroll"><table>
         <thead><tr><th>Home</th><th>Beach days</th><th>Pleasant days</th><th>Wet days</th>
           <th>Avg high</th><th>Total rain</th><th>Week</th></tr></thead>
@@ -947,11 +959,20 @@ function climateNotes(c) {
     <b>Loaded from the precomputed normals</b>${c.meta.snapshotBuilt
       ? ` built ${esc(new Date(c.meta.snapshotBuilt).toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}))}`
       : ''} — no historical API requests were needed for this.</div></div>`);
-  else if (c.rows) bits.push(`<div class="banner warn"><span class="bico">🐢</span><div>
-    <b>This period is not in the precomputed set, so it was built live.</b>
-    That costs roughly 1,800 weighted Open-Meteo calls against a 5,000/hour free-tier
-    cap, which is why it was slow. It is cached in this browser for 30 days.
-    ${esc(PERIODS[DEFAULT_PERIOD].label)} loads instantly.</div></div>`);
+  else if (c.rows) {
+    /* Two different situations, and telling them apart matters: the snapshot
+       file may be missing entirely, or it may simply not carry this period. */
+    const noFile = SNAPSHOT === false;
+    bits.push(`<div class="banner warn"><span class="bico">🐢</span><div>
+      <b>${noFile
+        ? 'The precomputed normals file could not be loaded, so this was built live.'
+        : 'This period is not in the precomputed set, so it was built live.'}</b>
+      That costs roughly ${PERIODS[S.period].years * 180} weighted Open-Meteo calls against a
+      5,000/hour free-tier cap, which is why it was slow. It is cached in this browser for 30 days.
+      ${noFile
+        ? 'See the Data sources panel below for what failed.'
+        : `${esc(PERIODS[DEFAULT_PERIOD].label)} loads instantly.`}</div></div>`);
+  }
   if (!c.meta.extended) bits.push(`<div class="banner warn"><span class="bico">ℹ️</span><div>
     <b>Humidity, dew point, cloud cover and pressure are unavailable for this period.</b>
     The archive rejected the extended variable set, so those four charts are hidden.

@@ -463,10 +463,18 @@ function trendChart(svg, opts) {
     fit = `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"
       stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>`;
     const sign = trend.perDecade > 0 ? '+' : '';
+    const flat = nums.every(v => v === nums[0]);
+    /* Three different things a reader could be told, and they are not the same
+       claim: nothing moved at all, it moved but the years scatter around the
+       line, or it moved and the years follow it. */
+    const caveat = flat ? ' — unchanged across the whole record'
+      : trend.r2 == null ? ''
+      : trend.r2 < 0.15 ? ` · r² ${trend.r2.toFixed(2)} — scattered, treat as weak`
+      : trend.r2 < 0.4  ? ` · r² ${trend.r2.toFixed(2)} — a loose trend`
+      : ` · r² ${trend.r2.toFixed(2)} — the years follow it closely`;
     note = `<text x="${PAD.l}" y="${PAD.t - 14}" font-size="11" font-weight="700" fill="${t.ink2}">`
-      + `${esc(sign + trend.perDecade + ' ' + (unit || ''))} per decade`
-      + `<tspan font-weight="400" fill="${t.muted}">  ·  r² ${trend.r2 == null ? '—' : trend.r2.toFixed(2)}`
-      + `${trend.r2 != null && trend.r2 < 0.15 ? ' — scattered, treat as weak' : ''}</tspan></text>`;
+      + `${esc(flat ? 'No change' : sign + trend.perDecade + ' ' + (unit || '') + ' per decade')}`
+      + `<tspan font-weight="400" fill="${t.muted}">${esc(caveat)}</tspan></text>`;
   }
 
   /* Year ticks: first, last and a couple between, never all of them. */

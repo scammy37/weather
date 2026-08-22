@@ -434,7 +434,9 @@ async function main() {
   ok('the week-ahead panel ranks all three homes',
      (await page.$$eval('.wk', e => e.length)) >= 3);
   const wkTxt = await page.textContent('#liveHost');
-  ok('it names a winner', wkTxt.includes('looks like the place to be'));
+  ok('it either names a winner or admits there is not one',
+     /looks like the place to be|edges it, but only just|None of the three looks especially good/.test(wkTxt),
+     wkTxt.slice(wkTxt.indexOf('Best week ahead'), wkTxt.indexOf('Best week ahead') + 160));
   ok('it defines what a beach day means', wkTxt.includes('high 75–95°F'));
   ok('each home shows seven day markers',
      (await page.$$eval('tbody .wk', rows => rows.every(r => r.querySelectorAll('.wk-d').length === 7))));
