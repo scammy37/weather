@@ -270,9 +270,15 @@ export function coopsResponse(url, tempF = 78.4) {
    so the tests exercise the conversion rather than a pre-converted number. */
 export function nwsResponse(url) {
   const u = String(url);
-  if (u.includes('/points/'))
-    return { properties: { gridId: 'ILM', gridX: 70, gridY: 60,
+  if (u.includes('/points/')) {
+    /* The real /points response names the radar covering the coordinate, which
+       is how the dashboard picks a station rather than guessing. Latitude
+       decides here so each home resolves to a different, plausible station. */
+    const lat = parseFloat(u.split('/points/')[1].split(',')[0]);
+    const radarStation = lat > 38 ? 'KOKX' : lat < 30 ? 'KTBW' : 'KLTX';
+    return { properties: { gridId: 'ILM', gridX: 70, gridY: 60, radarStation,
       observationStations: 'https://api.weather.gov/gridpoints/ILM/70,60/stations' } };
+  }
   if (u.endsWith('/stations'))
     return { features: [{ id: 'https://api.weather.gov/stations/KCRE',
       properties: { stationIdentifier: 'KCRE', name: 'North Myrtle Beach Grand Strand Airport' } }] };

@@ -167,6 +167,38 @@
   }
   tbody tr:first-child .rank { background:#eda100; color:#3d2600; }
 
+  /* ---- quick reference table ------------------------------------------- */
+  table.qr { font-size:.84rem; }
+  table.qr thead th { text-align:center; }
+  table.qr thead th:first-child { text-align:left; }
+  table.qr tbody td { text-align:center; padding:11px 10px; }
+  table.qr tbody td:first-child { text-align:left; font-weight:700; }
+  .qr-big { font-size:1.05rem; font-weight:800; letter-spacing:-.02em; white-space:nowrap; }
+  .qr-dot { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:7px; vertical-align:middle; }
+  .qr-na { color:var(--muted); font-weight:400; }
+  .qr-alert {
+    display:inline-flex; align-items:center; justify-content:center; min-width:20px; height:20px;
+    padding:0 6px; border-radius:99px; background:var(--critical); color:#fff;
+    font-size:.7rem; font-weight:800;
+  }
+
+  /* ---- radar ------------------------------------------------------------ */
+  .radar-wrap {
+    background:var(--surface2); border:1px solid var(--border); border-radius:11px;
+    overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:200px;
+  }
+  .radar-img { display:block; width:100%; height:auto; max-width:620px; margin:0 auto; }
+  .radar-wrap a { display:block; width:100%; }
+  .radar-picker { display:flex; gap:6px; flex-wrap:wrap; }
+  .radar-pick {
+    padding:5px 11px; border-radius:99px; border:1px solid var(--border);
+    background:var(--surface2); color:var(--ink2); font-size:.74rem; font-weight:700;
+    cursor:pointer; font-family:inherit;
+  }
+  .radar-pick:hover { background:var(--surface3); }
+  .radar-pick.on { background:var(--accent); color:#fff; border-color:transparent; }
+  .radar-loading { padding:40px 20px; color:var(--muted); font-size:.85rem; text-align:center; }
+
   /* ---- all-homes overview ---------------------------------------------- */
   /* Wider tiles in the cross-home strip: these hold place names, not numbers. */
   #liveHost .panel .stat-grid { grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }

@@ -27,9 +27,21 @@ everything else. An alert at a home you are *not* currently viewing still gets
 flagged, because a hurricane watch on the Carolina house does not matter less
 because you happen to be looking at New Jersey.
 
-**🏆 Best week ahead** — all three homes ranked over the next seven days on
-beach-quality and pleasant days, using the same definitions as the historical
-charts so the live view and the climate view speak one vocabulary.
+**📋 Quick reference** — one row per home: temperature now, feels-like, today's
+high and low, rain chance, humidity, wind, water temperature, sunset and any
+active alert. Click a row for that home's full dashboard.
+
+This replaced a "best week ahead" ranking and a warmest/coolest summary. Both
+were correct and useless: Bonita Springs is warmer and sunnier than New Jersey
+every day of the year, so a ranking that crowns it carries no information. A
+plain table lets you read the differences yourself.
+
+**📡 Live radar** — the National Weather Service RIDGE II loop for the radar
+station that actually covers each home, looked up from the NWS point service
+rather than hard-coded. Refresh pulls new sweeps; clicking opens the full radar
+on weather.gov. On the all-homes view a picker switches between the three
+stations — north Jersey, coastal Carolina and southwest Florida are each served
+by a different dish.
 
 **⚡ Live conditions** (per home) — current temperature, feels-like, humidity, dew point, wind
 and gusts, pressure, cloud cover, visibility, UV index, air quality, today's
@@ -93,6 +105,7 @@ from [Open-Meteo](https://open-meteo.com/) — free, no API key, no account.
 | Air quality | Open-Meteo Air Quality API (CAMS), US AQI scale |
 | Sunrise, sunset, solar noon, daylight | computed locally — NOAA solar equations |
 | Severe weather alerts | US National Weather Service (api.weather.gov) |
+| Radar | NWS RIDGE II loops, station resolved from the NWS point service |
 | Water temperature | NOAA CO-OPS tide gauges — a physical sensor, preferred over the model |
 | Backup for current conditions | Nearest National Weather Service station observation |
 | Accuracy check | NOAA NCEI 1991–2020 station normals |

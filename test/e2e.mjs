@@ -36,6 +36,14 @@ const MIME = { '.html':'text/html', '.js':'text/javascript', '.json':'applicatio
    behaviour itself is not what these tests are about. */
 const CTX = { viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' };
 
+/* A 1x1 GIF stands in for the radar loop: the tests care that the right URL is
+   requested and that Refresh busts the cache, not what the pixels show. */
+const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+async function routeRadar(pg) {
+  await pg.route('**://radar.weather.gov/**', r =>
+    r.fulfill({ status: 200, contentType: 'image/gif', body: GIF }));
+}
+
 async function openHome(pg, id = 'nmb', timeout = 120000) {
   await pg.waitForSelector('#app:not([hidden])', { timeout: 60000 });
   await pg.click(`.tab[data-id="${id}"]`);
@@ -80,6 +88,7 @@ async function main() {
   /* Hide the committed snapshot from this context: these sections test the
      path taken when no precomputed data is available. Section 19 covers the
      snapshot path with the fixture served explicitly. */
+  await routeRadar(page);
   await page.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await page.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await page.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -108,11 +117,15 @@ async function main() {
      ovTemps.join(' '));
   ok('each card shows a 7-day strip',
      (await page.$$eval('.ov-card', cards => cards.every(c => c.querySelectorAll('.ov-day').length === 7))));
-  ok('the cross-home summary strip is present',
-     (await page.textContent('#liveHost')).includes('Across all three homes'));
-  ok('it names the warmest and coolest home',
-     (await page.textContent('#liveHost')).includes('Warmest right now') &&
-     (await page.textContent('#liveHost')).includes('Coolest right now'));
+  ok('the quick-reference table is the first thing shown',
+     (await page.textContent('#liveHost')).includes('Quick reference'));
+  /* The old warmest/coolest strip and week-ahead ranking were removed on
+     purpose: Bonita Springs wins both every day of the year, so neither told
+     the reader anything. */
+  const ovTxt = await page.textContent('#liveHost');
+  ok('no panel ranks the homes against each other',
+     !ovTxt.includes('Warmest right now') && !ovTxt.includes('Best week ahead'),
+     'a ranking panel came back');
   ok('no "NaN" anywhere in the overview', !(await page.textContent('#liveHost')).includes('NaN'));
   ok('overview mode explains where the per-home detail lives',
      (await page.textContent('#climateStatus')).includes('pick it from the tabs'));
@@ -337,6 +350,7 @@ async function main() {
 
   console.log('\n\x1b[1m16. Failure handling\x1b[0m');
   const page2 = await (await browser.newContext(CTX)).newPage();
+  await routeRadar(page2);
   await page2.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await page2.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await page2.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -370,6 +384,7 @@ async function main() {
 
   console.log('\n\x1b[1m17. Partial failure — archive up, marine down\x1b[0m');
   const page3 = await (await browser.newContext(CTX)).newPage();
+  await routeRadar(page3);
   await page3.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await page3.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await page3.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -390,6 +405,7 @@ async function main() {
 
   console.log('\n\x1b[1m18. Mobile layout\x1b[0m');
   const m = await (await browser.newContext({ ...CTX, viewport: { width: 390, height: 844 } })).newPage();
+  await routeRadar(m);
   await m.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await m.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await m.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -438,18 +454,62 @@ async function main() {
   await page.click('.tab[data-id="all"]');
   await page.waitForSelector('.ov-card', { timeout: 15000 });
 
-  console.log('\n\x1b[1m18c. Best week ahead\x1b[0m');
-  await page.waitForSelector('.wk', { timeout: 15000 });
-  ok('the week-ahead panel ranks all three homes',
-     (await page.$$eval('.wk', e => e.length)) >= 3);
-  const wkTxt = await page.textContent('#liveHost');
-  ok('it either names a winner or admits there is not one',
-     /looks like the place to be|edges it, but only just|None of the three looks especially good/.test(wkTxt),
-     wkTxt.slice(wkTxt.indexOf('Best week ahead'), wkTxt.indexOf('Best week ahead') + 160));
-  ok('it defines what a beach day means', wkTxt.includes('high 75–95°F'));
-  ok('each home shows seven day markers',
-     (await page.$$eval('tbody .wk', rows => rows.every(r => r.querySelectorAll('.wk-d').length === 7))));
-  ok('no NaN in the ranking', !wkTxt.includes('NaN'));
+  console.log('\n\x1b[1m18c. Quick reference table\x1b[0m');
+  await page.waitForSelector('table.qr', { timeout: 15000 });
+  ok('one row per home', (await page.$$('table.qr tbody tr')).length === 3);
+  const qrHead = await page.$$eval('table.qr thead th', e => e.map(x => x.textContent.trim()));
+  for (const col of ['Now', 'Feels', 'Today', 'Rain', 'Humidity', 'Wind', 'Water', 'Sunset', 'Alert'])
+    ok(`has a "${col}" column`, qrHead.includes(col), qrHead.join(', '));
+  const qrTxt = await page.textContent('table.qr');
+  ok('every home is named', ['Myrtle', 'Bonita', 'Rockaway'].every(n => qrTxt.includes(n)));
+  ok('no NaN in the table', !qrTxt.includes('NaN'));
+  ok('it does not crown a winner', !qrTxt.toLowerCase().includes('best') && !qrTxt.includes('place to be'));
+  ok('an active alert shows as a count', (await page.$$('table.qr .qr-alert')).length >= 1);
+  await page.click('table.qr tbody tr:nth-child(3)');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
+  ok('clicking a row opens that home',
+     (await page.getAttribute('.tab[data-id="rockaway"]', 'class')).includes('on'));
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
+
+  console.log('\n\x1b[1m18f. Live radar\x1b[0m');
+  await page.waitForSelector('#radarPanel', { timeout: 20000 });
+  await page.waitForFunction(() => {
+    const n = document.getElementById('radarNote');
+    return n && n.textContent.includes('Station');
+  }, { timeout: 20000 }).catch(() => {});
+  const radarTxt = await page.textContent('#radarPanel');
+  ok('the radar panel names its station', /Station\s+K[A-Z]{3}/.test(radarTxt), radarTxt.slice(0, 120));
+  ok('the radar image points at the NWS loop',
+     (await page.getAttribute('.js-radar-wrap img', 'src') || '').includes('radar.weather.gov'),
+     await page.getAttribute('.js-radar-wrap img', 'src'));
+  ok('it links out to weather.gov',
+     (await page.getAttribute('.js-radar-wrap a', 'href') || '').includes('radar.weather.gov/station'));
+  ok('the image carries a descriptive alt text',
+     ((await page.getAttribute('.js-radar-wrap img', 'alt')) || '').includes('radar loop'));
+  const radarBefore = await page.getAttribute('.js-radar-wrap img', 'src');
+  await page.waitForTimeout(1100);
+  await page.click('.js-radar-refresh');
+  await page.waitForTimeout(300);
+  const radarAfter = await page.getAttribute('.js-radar-wrap img', 'src');
+  ok('Refresh fetches a new frame rather than the cached one', radarBefore !== radarAfter,
+     `${radarBefore} vs ${radarAfter}`);
+  ok('the station came from the NWS point lookup, not the fallback',
+     !radarTxt.includes('default for this area'), radarTxt.slice(0, 90));
+  /* Each home sits under a different radar, so the picker must actually swap it. */
+  ok('the all-homes view offers a radar picker', (await page.$$('.radar-pick')).length === 3);
+  await page.click('.radar-pick[data-r="rockaway"]');
+  await page.waitForFunction(() => {
+    const n = document.getElementById('radarNote');
+    return n && n.textContent.includes('KOKX');
+  }, { timeout: 15000 }).catch(() => {});
+  const rockRadar = await page.textContent('#radarPanel');
+  ok('picking Rockaway switches to its radar station', rockRadar.includes('KOKX'), rockRadar.slice(0, 110));
+  ok('and the heading follows', rockRadar.includes('Rockaway'));
+  await page.click('.radar-pick[data-r="nmb"]');
+  await page.waitForTimeout(400);
+  ok('switching back returns to the Carolina radar',
+     (await page.textContent('#radarPanel')).includes('KLTX'));
 
   console.log('\n\x1b[1m18d. Units come from the API, not from assumptions\x1b[0m');
   await page.click('.tab[data-id="nmb"]');
@@ -479,6 +539,7 @@ async function main() {
   /* Open-Meteo down, everything else up: the page must fall back, not blank. */
   const fbCtx = await browser.newContext(CTX);
   const fb = await fbCtx.newPage();
+  await routeRadar(fb);
   await fb.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await fb.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await fb.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -512,6 +573,7 @@ async function main() {
 
   const snapCtx = await browser.newContext(CTX);
   const sp = await snapCtx.newPage();
+  await routeRadar(sp);
   await sp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await sp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await sp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -545,6 +607,7 @@ async function main() {
   const partial = JSON.parse(JSON.stringify(fixture));
   for (const h of Object.values(partial.homes)) delete h[missingPeriod];
   const sp2 = await snapCtx.newPage();
+  await routeRadar(sp2);
   await sp2.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await sp2.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await sp2.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -569,6 +632,7 @@ async function main() {
   console.log('\n\x1b[1m20. Rate-limit handling\x1b[0m');
   const rlCtx = await browser.newContext(CTX);
   const rp = await rlCtx.newPage();
+  await routeRadar(rp);
   await rp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await rp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await rp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
@@ -631,6 +695,7 @@ async function main() {
   console.log('\n\x1b[1m21. Time zones — a viewer in Denver reading East Coast homes\x1b[0m');
   const tzCtx = await browser.newContext({ ...CTX, timezoneId: 'America/Denver' });
   const tzp = await tzCtx.newPage();
+  await routeRadar(tzp);
   await tzp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
   await tzp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await tzp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));

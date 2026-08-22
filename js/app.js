@@ -14,6 +14,8 @@ const ALL = 'all';                 // the three-up overview, not a location
 const S = {
   locId:     ALL,
   openAlert: null,
+  radar:     {},
+  radarPick: null,
   period:    DEFAULT_PERIOD,
   group:     'all',
   month:     -1,                 // focus month, -1 = none
@@ -413,6 +415,7 @@ function renderLive() {
   host.appendChild(grid);
 
   renderForecast(host, l, d);
+  renderRadar(host, l.id, false);
   renderHourly(host, l, d);
 }
 
@@ -488,96 +491,161 @@ function renderAlerts() {
 }
 
 /* ---------------------------------------------------------------------------
-   Week ahead — which home is nicest over the next seven days.
+   Quick reference — the three homes side by side.
 
-   Scores each forecast day with the same beach and pleasant-day definitions
-   the climate section uses, so the live ranking and the historical charts are
-   answering with one vocabulary rather than two.
+   This replaced a "best week ahead" ranking and a warmest/coolest summary.
+   Both were technically correct and practically useless: Bonita Springs is
+   warmer and sunnier than New Jersey every single day of the year, so a
+   ranking that crowns it carries no information. A plain table of the same
+   figures lets you read the differences yourself, which is what comparing
+   three homes actually means.
    ------------------------------------------------------------------------- */
-function weekScore(l) {
-  const d = S.live[l.id];
-  if (!d || !d.wx || !d.wx.daily) return null;
-  const dd = d.wx.daily, times = dd.time || [];
-  const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: l.tz });
-  let start = times.indexOf(todayISO); if (start < 0) start = 0;
-
-  let beach = 0, pleasant = 0, wet = 0, n = 0, sumHi = 0, sumRain = 0;
-  const days = [];
-  for (let i = start; i < times.length && n < 7; i++, n++) {
-    const hi = dd.temperature_2m_max?.[i], lo = dd.temperature_2m_min?.[i];
-    const rain = dd.precipitation_sum?.[i] ?? 0;
-    const sun = dd.sunshine_duration?.[i], daylight = dd.daylight_duration?.[i];
-    const sunRatio = (sun != null && daylight) ? sun / daylight : null;
-    const isBeach = hi >= 75 && hi <= 95 && rain < 0.04 && (sunRatio == null || sunRatio >= 0.5);
-    const isPleasant = hi >= 65 && hi <= 85 && lo >= 45 && rain < 0.04;
-    if (isBeach) beach++;
-    if (isPleasant) pleasant++;
-    if (rain >= 0.04) wet++;
-    if (typeof hi === 'number') sumHi += hi;
-    sumRain += rain;
-    days.push({ date: times[i], hi, lo, rain, isBeach, isPleasant, code: dd.weather_code?.[i] });
-  }
-  if (!n) return null;
-  return {
-    loc: l, days, n, beach, pleasant, wet,
-    avgHigh: sumHi / n, totalRain: sumRain,
-    /* Beach days count double: they are the scarcer, more decisive outcome. */
-    score: beach * 2 + pleasant - wet * 0.5
-  };
-}
-
-function renderWeekAhead(host) {
-  const scores = LOCATIONS.map(weekScore).filter(Boolean);
-  if (scores.length < 2) return;
-  const ranked = [...scores].sort((a, b) => b.score - a.score);
-  const best = ranked[0];
-  const bestGood = best.beach + best.pleasant;
-  /* A ranking is only worth crowning if the winner is actually good. When no
-     home clears a single beach or pleasant day, saying so is more useful than
-     declaring a winner on a fraction of a point. */
-  const runnerUp = ranked[1];
-  const decisive = runnerUp ? best.score - runnerUp.score >= 1 : true;
+function renderQuickReference(host) {
+  const rows = LOCATIONS.map(l => {
+    const d = S.live[l.id];
+    const cur = d && d.wx && d.wx.current;
+    const daily = (d && d.wx && d.wx.daily) || {};
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: l.tz });
+    let ti = (daily.time || []).indexOf(todayISO);
+    if (ti < 0) ti = Math.min(2, (daily.time || []).length - 1);
+    const sun = sunTimes(new Date(), l.lat, l.lon);
+    const mc = d && d.marine && d.marine.current;
+    const waterF = d && d.water ? d.water.tempF
+      : (mc && typeof mc.sea_surface_temperature === 'number' ? mc.sea_surface_temperature : null);
+    return {
+      l, cur, d,
+      icon: cur ? wmoInfo(cur.weather_code, cur.is_day == null ? 1 : cur.is_day) : null,
+      hi: daily.temperature_2m_max?.[ti], lo: daily.temperature_2m_min?.[ti],
+      pop: daily.precipitation_probability_max?.[ti],
+      rain: daily.precipitation_sum?.[ti],
+      waterF,
+      sunset: localMinutes(sun.sunset, l.tz),
+      alerts: (d && d.alerts) || []
+    };
+  });
 
   const p = el('section', 'panel');
+  const cell = (v, suffix = '') => v == null || Number.isNaN(v) ? '<span class="qr-na">—</span>' : `${v}${suffix}`;
   p.innerHTML = `
-    <div class="panel-h"><h2>🏆 Best week ahead</h2>
-      <span class="note">Next 7 days, scored on beach-quality and pleasant days</span></div>
-    <div class="panel-b">
-      <div class="banner info" style="margin-bottom:14px"><span class="bico">${bestGood ? best.loc.emoji : '🤷'}</span><div>
-        ${bestGood === 0
-          ? `<b>None of the three looks especially good this week.</b>
-             No beach-quality or pleasant days anywhere — ${esc(ranked.map(r => `${r.loc.short} ${r.wet} wet`).join(', '))}.
-             The table below still ranks them, for what it is worth.`
-          : `<b>${esc(best.loc.name)} ${decisive ? 'looks like the place to be' : 'edges it, but only just'}.</b>
-             ${best.beach} beach-quality day${best.beach === 1 ? '' : 's'} and
-             ${best.pleasant} pleasant day${best.pleasant === 1 ? '' : 's'} in the next week,
-             averaging ${fmtNum(best.avgHigh, 0)}°F.
-             ${decisive ? '' : `${esc(runnerUp.loc.short)} is within a point of it.`}`}
-      </div></div>
-      <div class="tscroll"><table>
-        <thead><tr><th>Home</th><th>Beach days</th><th>Pleasant days</th><th>Wet days</th>
-          <th>Avg high</th><th>Total rain</th><th>Week</th></tr></thead>
-        <tbody>${ranked.map((r, i) => `<tr data-l="${r.loc.id}">
-          <td><span class="rank">${i + 1}</span> ${r.loc.emoji} ${esc(r.loc.short)}, ${r.loc.state}</td>
-          <td${r.beach ? ' class="hi"' : ''}>${r.beach}</td>
-          <td${r.pleasant ? ' class="lo"' : ''}>${r.pleasant}</td>
-          <td>${r.wet}</td>
-          <td>${fmtNum(r.avgHigh, 0)}°F</td>
-          <td>${fmtNum(r.totalRain, 2)} in</td>
-          <td><span class="wk">${r.days.map(d =>
-            `<i class="wk-d ${d.isBeach ? 'wk-beach' : d.isPleasant ? 'wk-ok' : d.rain >= 0.04 ? 'wk-wet' : ''}"
-              title="${esc(new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long' }))}: ${fmtNum(d.hi, 0)}°F, ${fmtNum(d.rain, 2)} in"></i>`).join('')}</span></td>
-        </tr>`).join('')}</tbody></table></div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:10px">
-        Beach day: high 75–95°F, under 0.04 in of rain, sunshine over half the daylight.
-        Pleasant day: high 65–85°F, low at least 45°F, dry.
-        <span class="wk" style="margin-left:8px"><i class="wk-d wk-beach"></i> beach
-        <i class="wk-d wk-ok"></i> pleasant <i class="wk-d wk-wet"></i> wet <i class="wk-d"></i> neither</span>
-      </div>
+    <div class="panel-h"><h2>📋 Quick reference</h2>
+      <span class="note">Right now at all three · click a row for the full dashboard</span></div>
+    <div class="panel-b tscroll">
+      <table class="qr">
+        <thead><tr>
+          <th>Home</th><th>Now</th><th>Feels</th><th>Today</th><th>Rain</th>
+          <th>Humidity</th><th>Wind</th><th>Water</th><th>Sunset</th><th>Alert</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `<tr data-l="${r.l.id}">
+          <td><span class="qr-dot" style="background:${accentOf(r.l)}"></span>${r.l.emoji} ${esc(r.l.short)}, ${r.l.state}</td>
+          <td class="qr-big">${r.cur ? `${r.icon.icon} ${Math.round(r.cur.temperature_2m)}°` : '<span class="qr-na">—</span>'}</td>
+          <td>${r.cur ? Math.round(r.cur.apparent_temperature) + '°' : '<span class="qr-na">—</span>'}</td>
+          <td>${r.hi != null ? `<b>${Math.round(r.hi)}°</b> / ${Math.round(r.lo)}°` : '<span class="qr-na">—</span>'}</td>
+          <td>${cell(r.pop != null ? Math.round(r.pop) : null, '%')}</td>
+          <td>${r.cur ? Math.round(r.cur.relative_humidity_2m) + '%' : '<span class="qr-na">—</span>'}</td>
+          <td>${r.cur ? `${Math.round(r.cur.wind_speed_10m)} ${degToCompass(r.cur.wind_direction_10m)}` : '<span class="qr-na">—</span>'}</td>
+          <td>${r.waterF != null ? Math.round(r.waterF) + '°' : '<span class="qr-na">—</span>'}</td>
+          <td>${esc(fmtMinutes(r.sunset))}</td>
+          <td>${r.alerts.length
+                ? `<span class="qr-alert">${r.alerts.length}</span>`
+                : '<span class="qr-na">none</span>'}</td>
+        </tr>`).join('')}</tbody>
+      </table>
     </div>`;
   host.appendChild(p);
   p.querySelectorAll('tbody tr').forEach(tr =>
     tr.addEventListener('click', () => selectLocation(tr.dataset.l)));
+}
+
+/* ---------------------------------------------------------------------------
+   Live radar.
+
+   NWS RIDGE II serves an animated loop of the last ten sweeps as a plain GIF.
+   No key, no tile maths, and the station covering each home comes from the
+   NWS point lookup rather than a guess.
+   ------------------------------------------------------------------------- */
+async function loadRadar(locId) {
+  if (S.radar[locId]) return S.radar[locId];
+  const l = loc(locId);
+  try {
+    S.radar[locId] = await fetchRadarStation(l);
+  } catch (_) {
+    const id = RADAR_FALLBACK[locId];
+    S.radar[locId] = id ? {
+      id, fallback: true,
+      loop:  `https://radar.weather.gov/ridge/standard/${id}_loop.gif`,
+      still: `https://radar.weather.gov/ridge/standard/${id}_0.gif`,
+      page:  `https://radar.weather.gov/station/${id.toLowerCase()}/standard`
+    } : null;
+  }
+  return S.radar[locId];
+}
+
+function renderRadar(host, locId, pickable) {
+  const l = loc(locId);
+  const p = el('section', 'panel');
+  p.id = 'radarPanel';
+  p.innerHTML = `<div class="panel-h">
+      <h2>📡 Live radar — ${esc(l.name)}</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${pickable ? `<div class="radar-picker">${LOCATIONS.map(x =>
+          `<button class="radar-pick${x.id === locId ? ' on' : ''}" data-r="${x.id}"
+            type="button">${x.emoji} ${esc(x.short)}</button>`).join('')}</div>` : ''}
+        <button class="btn js-radar-refresh">↻ Refresh</button>
+      </div></div>
+    <div class="panel-b">
+      <div class="radar-wrap js-radar-wrap">
+        <div class="radar-loading">Finding the radar station that covers ${esc(l.short)}…</div>
+      </div>
+      <div class="note js-radar-note" id="radarNote" style="margin-top:9px;display:block">Loading…</div>
+    </div>`;
+
+  /* Queries are scoped to the panel rather than the document: the picker
+     rebuilds this panel while it is still detached, and document.getElementById
+     would find nothing at that point. */
+  const wrap = p.querySelector('.js-radar-wrap');
+  const note = p.querySelector('.js-radar-note');
+
+  const paint = st => {
+    if (!st) {
+      wrap.innerHTML = `<div class="radar-loading">Radar is unavailable for this location right now.</div>`;
+      note.textContent = '';
+      return;
+    }
+    /* Cache-buster, so Refresh fetches new sweeps rather than redisplaying
+       the browser's copy. */
+    const url = `${st.loop}?t=${Date.now()}`;
+    wrap.innerHTML = `<a href="${esc(st.page)}" target="_blank" rel="noopener"
+        title="Open the full NWS radar for ${esc(st.id)}">
+        <img src="${esc(url)}" class="radar-img" loading="lazy"
+             alt="National Weather Service radar loop for station ${esc(st.id)}, covering ${esc(l.name)}">
+      </a>`;
+    note.innerHTML = `Station <b>${esc(st.id)}</b>${st.fallback ? ' (default for this area)' : ''}
+      · last ten sweeps · refreshed ${esc(new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}
+      · click the image to open it on weather.gov`;
+    wrap.querySelector('img').addEventListener('error', () => {
+      wrap.innerHTML = `<div class="radar-loading">The radar image could not be loaded.
+        <a href="${esc(st.page)}" target="_blank" rel="noopener">Open it on weather.gov</a> instead.</div>`;
+    });
+  };
+
+  p.querySelector('.js-radar-refresh').addEventListener('click', e => {
+    const b = e.currentTarget;
+    b.disabled = true; b.textContent = '↻ Refreshing…';
+    paint(S.radar[locId]);
+    setTimeout(() => { b.disabled = false; b.textContent = '↻ Refresh'; }, 900);
+  });
+
+  if (pickable) p.querySelectorAll('.radar-pick').forEach(btn =>
+    btn.addEventListener('click', () => {
+      S.radarPick = btn.dataset.r;
+      const holder = el('div');
+      renderRadar(holder, S.radarPick, true);
+      p.replaceWith(holder.firstChild);
+    }));
+
+  host.appendChild(p);
+  loadRadar(locId).then(paint);
+  return p;
 }
 
 /* ---------------------------------------------------------------------------
@@ -588,39 +656,7 @@ function renderWeekAhead(host) {
    is for going deeper, not for the basics.
    ------------------------------------------------------------------------- */
 function renderOverview(host) {
-  const live = LOCATIONS.map(l => ({ l, d: S.live[l.id] }))
-    .map(o => ({ ...o, cur: o.d && o.d.wx && o.d.wx.current }));
-  const withData = live.filter(o => o.cur && typeof o.cur.temperature_2m === 'number');
-
-  /* Headline strip: the comparisons worth making across three homes. */
-  if (withData.length > 1) {
-    const warm = withData.reduce((a, b) => b.cur.temperature_2m > a.cur.temperature_2m ? b : a);
-    const cool = withData.reduce((a, b) => b.cur.temperature_2m < a.cur.temperature_2m ? b : a);
-    const spread = warm.cur.temperature_2m - cool.cur.temperature_2m;
-    const wet = withData.filter(o => (o.cur.precipitation || 0) > 0);
-    const oceans = LOCATIONS.map(l => ({ l, m: S.live[l.id] && S.live[l.id].marine && S.live[l.id].marine.current }))
-      .filter(o => o.m && typeof o.m.sea_surface_temperature === 'number' && !o.l.marine.proxy);
-    const bestOcean = oceans.length
-      ? oceans.reduce((a, b) => b.m.sea_surface_temperature > a.m.sea_surface_temperature ? b : a) : null;
-
-    const facts = [
-      ['Warmest right now', `${warm.l.emoji} ${warm.l.short}`, `${Math.round(warm.cur.temperature_2m)}°F`],
-      ['Coolest right now', `${cool.l.emoji} ${cool.l.short}`, `${Math.round(cool.cur.temperature_2m)}°F`],
-      ['Spread between homes', `${Math.round(spread)}°F`, spread > 25 ? 'a different season entirely' : spread > 12 ? 'a real difference' : 'much of a muchness'],
-      ['Raining now', wet.length ? wet.map(o => o.l.short).join(', ') : 'Nowhere', wet.length ? `${wet.length} of ${withData.length} homes` : 'all three dry']
-    ];
-    if (bestOcean) facts.push(['Warmest water',
-      `${bestOcean.l.emoji} ${bestOcean.l.short}`,
-      `${fmtNum(bestOcean.m.sea_surface_temperature, 1)}°F · ${swimLabel(bestOcean.m.sea_surface_temperature)}`]);
-
-    const strip = el('section', 'panel');
-    strip.innerHTML = `<div class="panel-h"><h2>📍 Across all three homes</h2>
-        <span class="note">Updated ${esc(relTime(Math.max(...live.map(o => (o.d && o.d.at) || 0))))}</span></div>
-      <div class="panel-b"><div class="stat-grid">${facts.map(([a, b, c]) =>
-        `<div class="stat"><div class="stat-l">${esc(a)}</div><div class="stat-v">${esc(String(b))}</div>
-         <div class="stat-s">${esc(String(c))}</div></div>`).join('')}</div></div>`;
-    host.appendChild(strip);
-  }
+  renderQuickReference(host);
 
   /* One card per home. */
   const grid = el('div', 'ov-grid');
@@ -723,7 +759,8 @@ function renderOverview(host) {
     grid.appendChild(card);
   });
   host.appendChild(grid);
-  renderWeekAhead(host);
+  /* On the all-homes view the reader picks whose radar to watch. */
+  renderRadar(host, S.radarPick || LOCATIONS[0].id, true);
 }
 
 /* What can still be shown from the NWS observation alone. */

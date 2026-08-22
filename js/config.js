@@ -86,6 +86,11 @@ const LOCATIONS = [
    Light-mode aqua sits at 2.74:1 on the light surface, so every chart using it
    ships direct labels and the table view as relief. */
 
+/* Radar station covering each home, used only if the NWS point lookup fails.
+   Verified against the NWS coverage areas: Wilmington NC serves the Grand
+   Strand, Tampa Bay serves southwest Florida, Upton NY serves north Jersey. */
+const RADAR_FALLBACK = { nmb: 'KLTX', bonita: 'KTBW', rockaway: 'KOKX' };
+
 const MONTHS      = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTHS_FULL = ['January','February','March','April','May','June',
                      'July','August','September','October','November','December'];
@@ -223,6 +228,6 @@ function wmoInfo(code, isDay = 1) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { LOCATIONS, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
+  module.exports = { LOCATIONS, RADAR_FALLBACK, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
                      SST_PERIOD, METRICS, METRIC_BY_KEY, GROUPS, WMO, wmoInfo };
 }
