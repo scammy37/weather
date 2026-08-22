@@ -1,4 +1,4 @@
-# 🏡 Three Homes Weather Dashboard
+# 🏡 Tri State Weather
 
 Live weather and monthly climate normals for three homes, on one page.
 

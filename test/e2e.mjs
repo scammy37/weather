@@ -29,6 +29,12 @@ const MIME = { '.html':'text/html', '.js':'text/javascript', '.json':'applicatio
 
 /* The default view is the three-home overview, which deliberately has no
    per-home KPI cards or charts. Anything asserting those has to open a home. */
+/* sw.js intercepts every same-origin GET, and requests re-issued from a service
+   worker bypass page.route entirely — which silently defeated the routes that
+   hide data/climate.json. Every test context blocks service workers; the PWA
+   behaviour itself is not what these tests are about. */
+const CTX = { viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' };
+
 async function openHome(pg, id = 'nmb', timeout = 120000) {
   await pg.waitForSelector('#app:not([hidden])', { timeout: 60000 });
   await pg.click(`.tab[data-id="${id}"]`);
@@ -60,7 +66,7 @@ async function main() {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({ headless: !args.includes('--headed') });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await (await browser.newContext(CTX)).newPage();
 
   const consoleErrors = [];
   page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
@@ -70,6 +76,10 @@ async function main() {
     status: 200, contentType: 'application/json',
     headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
 
+  /* Hide the committed snapshot from this context: these sections test the
+     path taken when no precomputed data is available. Section 19 covers the
+     snapshot path with the fixture served explicitly. */
+  await page.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page.route('**://api.open-meteo.com/**',        r => { calls.forecast++;   json(r, forecastResponse(r.request().url())); });
   await page.route('**://air-quality-api.open-meteo.com/**', r => { calls.air++;   json(r, airResponse(r.request().url())); });
   await page.route('**://marine-api.open-meteo.com/**',  r => {
@@ -320,8 +330,10 @@ async function main() {
   ok('source notes explain every feed', (await page.textContent('#sourceNotes')).includes('ERA5'));
 
   console.log('\n\x1b[1m16. Failure handling\x1b[0m');
-  const page2 = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page2 = await (await browser.newContext(CTX)).newPage();
+  await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page2.route('**://*.open-meteo.com/**', r => r.abort('failed'));
+  await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page2.route('**://api.open-meteo.com/**', r => r.abort('failed'));
   await page2.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
   await page2.waitForSelector('#app:not([hidden])', { timeout: 60000 });
@@ -345,7 +357,8 @@ async function main() {
   await page2.close();
 
   console.log('\n\x1b[1m17. Partial failure — archive up, marine down\x1b[0m');
-  const page3 = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page3 = await (await browser.newContext(CTX)).newPage();
+  await page3.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page3.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await page3.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
   await page3.route('**://archive-api.open-meteo.com/**', r => json(r, archiveResponse(r.request().url())));
@@ -361,7 +374,8 @@ async function main() {
   await page3.close();
 
   console.log('\n\x1b[1m18. Mobile layout\x1b[0m');
-  const m = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const m = await (await browser.newContext({ ...CTX, viewport: { width: 390, height: 844 } })).newPage();
+  await m.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await m.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await m.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
   await m.route('**://archive-api.open-meteo.com/**', r => json(r, archiveResponse(r.request().url())));
@@ -385,14 +399,13 @@ async function main() {
   console.log('\n\x1b[1m19. Precomputed snapshot — the page must not hit the archive at all\x1b[0m');
   /* Build a snapshot the same way scripts/build-climate.mjs does, serve it, and
      assert the archive is never touched. This is the whole point of the fix. */
-  const snapPath = path.join(ROOT, 'data', 'climate.json');
-  const hadSnap = fs.existsSync(snapPath);
-  const snapBackup = hadSnap ? fs.readFileSync(snapPath) : null;
-  fs.mkdirSync(path.dirname(snapPath), { recursive: true });
-  fs.copyFileSync(path.join(SHOTS, 'climate-test.json'), snapPath);
+  const fixture = JSON.parse(fs.readFileSync(path.join(SHOTS, 'climate-test.json'), 'utf8'));
+  const serveSnapshot = obj => r => r.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(obj) });
 
-  const snapCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const snapCtx = await browser.newContext(CTX);
   const sp = await snapCtx.newPage();
+  await sp.route('**/data/climate.json', serveSnapshot(fixture));
   let archiveHits = 0, marineArchiveHits = 0;
   await sp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await sp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -418,11 +431,11 @@ async function main() {
      (await sp.$('#btnLoadCompare')) === null);
 
   /* Switching to a period the snapshot lacks must fall back, and say so. */
-  const snapJson = JSON.parse(fs.readFileSync(snapPath, 'utf8'));
   const missingPeriod = Object.keys(CFG.PERIODS).find(k => k !== DEFAULT_PERIOD);
-  for (const h of Object.values(snapJson.homes)) delete h[missingPeriod];
-  fs.writeFileSync(snapPath, JSON.stringify(snapJson));
+  const partial = JSON.parse(JSON.stringify(fixture));
+  for (const h of Object.values(partial.homes)) delete h[missingPeriod];
   const sp2 = await snapCtx.newPage();
+  await sp2.route('**/data/climate.json', serveSnapshot(partial));
   let archiveHits2 = 0;
   await sp2.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await sp2.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -441,8 +454,9 @@ async function main() {
   await snapCtx.close();
 
   console.log('\n\x1b[1m20. Rate-limit handling\x1b[0m');
-  const rlCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const rlCtx = await browser.newContext(CTX);
   const rp = await rlCtx.newPage();
+  await rp.route('**/data/climate.json', serveSnapshot(partial));
   await rp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await rp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
   await rp.route('**://marine-api.open-meteo.com/**',  r => json(r, marineResponse(r.request().url())));
@@ -451,7 +465,6 @@ async function main() {
     headers: { 'Access-Control-Allow-Origin': '*' },
     body: JSON.stringify({ error: true, reason: 'Hourly API request limit exceeded. Please try again in the next hour.' })
   }));
-  fs.writeFileSync(snapPath, JSON.stringify(snapJson));
   await rp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
   await openHome(rp, 'nmb', 30000);
   const rlStart = Date.now();
@@ -468,11 +481,10 @@ async function main() {
      /^-?\d+°$/.test((await rp.textContent('.now-temp')).trim()));
   await rlCtx.close();
 
-  if (hadSnap) fs.writeFileSync(snapPath, snapBackup); else fs.rmSync(snapPath, { force: true });
-
   console.log('\n\x1b[1m21. Time zones — a viewer in Denver reading East Coast homes\x1b[0m');
-  const tzCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Denver' });
+  const tzCtx = await browser.newContext({ ...CTX, timezoneId: 'America/Denver' });
   const tzp = await tzCtx.newPage();
+  await tzp.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await tzp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await tzp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
   await tzp.route('**://archive-api.open-meteo.com/**', r => json(r, archiveResponse(r.request().url())));
