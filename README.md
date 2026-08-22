@@ -83,31 +83,34 @@ result.
 Open-Meteo weights an API call as roughly `(days ÷ 14) × (variables ÷ 10)`.
 Building the normals in the browser meant every visitor paid:
 
-| | weighted calls |
-|---|---|
-| archive, core variables (3 × 10 yr × 17 vars) | 1,331 |
-| archive, extended variables (3 × 10 yr × 5 vars) | 391 |
-| marine sea-surface temperature | 115 |
-| **per home** | **1,837** |
-| **all three homes — one page load** | **5,511** |
+| normals window | per home | all three homes | vs 5,000/hour cap |
+|---|---|---|---|
+| 30 years | 1,837 | 5,510 | **110% — over** |
+| 15 years | 976 | 2,927 | 59% |
+| **10 years (default)** | **689** | **2,066** | **41%** |
 
-The free tier allows 10,000 calls/day and **5,000/hour**, so a single page load
-blew the hourly cap and the dashboard rate-limited itself. Precomputing drops a
-visitor's cost to the live feed alone — about **5 weighted calls**.
+The free tier allows 10,000 calls/day and **5,000/hour**. At the original
+30-year default a single page load blew the hourly cap and the dashboard
+rate-limited itself. Precomputing drops a visitor's cost to the live feed
+alone — about **5 weighted calls**.
 
-The build script paces its own requests (90 s between chunks, ~77 min total) to
-stay under the hourly cap while it runs.
+The build script paces itself against both limits. The per-minute cap (600) is
+usually the binding one: a single 10-year, 17-variable chunk is worth ~444, so
+two cannot share a minute. A 10-year build takes about half an hour; a 30-year
+one about ninety minutes.
 
-Only the default period is precomputed; a run covering all three periods would
-cost ~13,000 calls, over the daily cap. Selecting another period falls back to
-building it live, and the page says so.
+Only the default period is precomputed. Selecting another falls back to building
+it live, and the page says so. Runs **merge** into `data/climate.json`, so
+building one period leaves the others intact.
 
 Rebuild manually with:
 
 ```bash
-node scripts/build-climate.mjs                 # all homes, default period
-node scripts/build-climate.mjs --period all    # every period (~3.5 h)
+node scripts/build-climate.mjs                 # all homes, default period (~30 min)
+node scripts/build-climate.mjs --period all    # every period (several hours)
+node scripts/build-climate.mjs --period 1996-2025
 node scripts/build-climate.mjs --home nmb
+node scripts/build-climate.mjs --pause 0       # override the automatic pacing
 ```
 
 or from the Actions tab → *Rebuild climate normals* → *Run workflow*.
@@ -122,9 +125,25 @@ verified against published times (New York, 21 Jun: 5:25 AM / 8:30 PM; London,
 
 Pick one from the header of the climate section:
 
+- **2016–2025** — the recent 10 years *(default)*
+- **2011–2025** — the recent 15 years
+- **1996–2025** — the latest full 30 years
 - **1991–2020** — the WMO standard 30-year normals period
-- **1996–2025** — the latest full 30 years *(default)*
-- **2011–2025** — the recent 15 years, useful for seeing how the climate has shifted
+
+Ten years is the default on purpose. It costs a third of a 30-year pull, and it
+describes the climate these homes have *now* rather than averaging in cooler
+years from the late 1990s. The trade is precision:
+
+| measure | 30 years | 10 years |
+|---|---|---|
+| Monthly avg high / low | ±0.9°F | ±1.6°F |
+| Monthly rainfall | ±0.60 in | ±1.05 in |
+| Days ≥ 90°F | ±1.2 days | ±2.1 days |
+
+(the band the published figure lands in 90% of the time). Records suffer most —
+a 10-year record high reads about **2.5°F milder** than a 30-year one, simply
+because ten years offers fewer chances to catch an extreme. The longer windows
+are one click away when the fuller record is what you want.
 
 ### Definitions used
 
@@ -170,7 +189,7 @@ way everywhere rather than implying otherwise.
 | `serve.py` | Local static server |
 | `test/unit.mjs` | 71 assertions on the aggregation maths |
 | `test/e2e.mjs` | 107 browser assertions across 22 groups, against a mocked Open-Meteo |
-| `test/build-script.mjs` | 34 assertions on the precompute script and its output |
+| `test/build-script.mjs` | 41 assertions on the precompute script, its quota maths and merge behaviour |
 | `test/mock.mjs` | Synthetic API responses shaped like the real ones |
 
 ---

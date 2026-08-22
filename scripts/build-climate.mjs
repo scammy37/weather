@@ -70,19 +70,72 @@ if (!homes.length) { console.error(`No home matches --home ${onlyHome}`); proces
 if (!periods.length) { console.error(`No period matches --period ${onlyPeriod}`); process.exit(1); }
 
 /* --- pacing -------------------------------------------------------------
-   Open-Meteo weights a call as about (days / 14) x (variables / 10), and caps
-   the free tier at 5,000/hour. A single 10-year, 17-variable chunk is worth
-   roughly 440, so three homes for one period comes to about 5,500 — just over
-   the hourly cap if fired off quickly. Spacing the requests out keeps the
-   rolling hour under the limit. This runs unattended once a month, so the
-   extra wall-clock time costs nothing.                                       */
-const PAUSE_MS = +argOf('--pause', 90000);
+   Open-Meteo weights a call as about (days / 14) x (variables / 10) and caps
+   the free tier at 5,000/hour. Rather than guess a fixed sleep, the cost of
+   the requested build is estimated up front and the pause derived from it, so
+   a cheap 10-year run finishes in minutes while an expensive 30-year one
+   slows itself down. --pause overrides the calculation.                      */
+const TARGET_PER_HOUR = +argOf('--rate', 4000);   // headroom under the 5,000 cap
+const callWeight = (days, vars) => (days / 14) * (vars / 10);
+
+const MINUTE_CAP = 600;   // Open-Meteo's per-minute weighted limit
+
+function estimateCost() {
+  let weight = 0, requests = 0, heaviest = 0;
+  const note = (w, n = 1) => { weight += w * n; requests += n; if (w > heaviest) heaviest = w; };
+  for (const loc of homes) {
+    const sstYears = +cfg.SST_PERIOD.end.slice(0, 4) - +cfg.SST_PERIOD.start.slice(0, 4) + 1;
+    note(callWeight(365, 4), sstYears + 1);
+    for (const p of periods) {
+      const chunks = api.decadeChunks(cfg.PERIODS[p].start, cfg.PERIODS[p].end);
+      for (const c of chunks) {
+        const days = (Date.parse(c.end) - Date.parse(c.start)) / 86400000 + 1;
+        note(callWeight(days, api.ARCHIVE_CORE.length));
+        note(callWeight(days, api.ARCHIVE_EXT.length));
+      }
+    }
+  }
+  return { weight, requests, heaviest };
+}
+
+const est = estimateCost();
+
+/* Two separate limits, and the pause has to satisfy both.
+
+   Per minute (600): the heaviest single request must be able to sit alone in
+   its own minute, so requests are spaced by at least heaviest/600 of a minute.
+
+   Per hour (5,000, targeted at 4,000): only binding when the whole build
+   exceeds it — a build smaller than the cap fits in one hour however fast it
+   runs, so it needs no extra spreading at all. */
+const minutePause = (est.heaviest / MINUTE_CAP) * 60000;
+const hourPause = est.weight > TARGET_PER_HOUR
+  ? ((est.weight / TARGET_PER_HOUR) * 3600000) / Math.max(1, est.requests)
+  : 0;
+const autoPause = Math.round(Math.max(minutePause, hourPause));
+const PAUSE_MS = args.includes('--pause') ? +argOf('--pause', 0) : autoPause;
 const sleep = ms => (ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve());
 
 const t0 = Date.now();
 const log = (...m) => console.log(`[${String(Math.round((Date.now() - t0) / 1000)).padStart(4)}s]`, ...m);
 
+log(`Building ${homes.length} home(s) x ${periods.length} period(s): ${periods.join(', ')}`);
+log(`Estimated cost ~${est.weight.toFixed(0)} weighted calls over ${est.requests} requests`);
+log(PAUSE_MS > 0
+  ? `Pacing ${(PAUSE_MS / 1000).toFixed(0)}s between requests → ~${((est.requests * PAUSE_MS / 1000) / 60).toFixed(0)} min `
+    + `(${hourPause > minutePause ? 'hourly cap' : 'per-minute cap'} is the binding constraint)`
+  : `No pacing needed`);
+
 /* --- build --------------------------------------------------------------- */
+/* Load any existing file so a run for one period does not discard the others.
+   Periods accumulate across runs; each is replaced only when rebuilt. */
+let existing = null;
+try {
+  if (fs.existsSync(outPath)) existing = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+} catch (err) {
+  console.warn(`Could not read existing ${path.relative(ROOT, outPath)} (${err.message}) — starting fresh.`);
+}
+
 const out = {
   generated: new Date().toISOString(),
   source: 'Open-Meteo — ECMWF ERA5 reanalysis (archive) and marine model (sea-surface temperature)',
@@ -94,8 +147,22 @@ const out = {
 
 let failures = 0;
 
+/* Carry forward every home/period this run is not rebuilding. */
+if (existing && existing.homes) {
+  for (const [homeId, sets] of Object.entries(existing.homes)) {
+    for (const [p, set] of Object.entries(sets)) {
+      if (!cfg.PERIODS[p]) continue;                     // period no longer offered
+      const rebuilding = homes.some(h => h.id === homeId) && periods.includes(p);
+      if (rebuilding) continue;
+      (out.homes[homeId] || (out.homes[homeId] = {}))[p] = set;
+    }
+  }
+  const kept = Object.values(out.homes).reduce((n, h) => n + Object.keys(h).length, 0);
+  if (kept) log(`Carrying forward ${kept} existing home/period set${kept === 1 ? '' : 's'}.`);
+}
+
 for (const loc of homes) {
-  out.homes[loc.id] = {};
+  if (!out.homes[loc.id]) out.homes[loc.id] = {};
   const sunClim = solar.monthlySunClimatology(loc.lat, loc.lon, loc.tz);
 
   /* Sea-surface temperature does not depend on the normals period, so it is

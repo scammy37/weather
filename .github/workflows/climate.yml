@@ -7,9 +7,12 @@ name: Rebuild climate normals
 # cap — the page rate-limited itself. Doing it here, once a month, drops a
 # visitor's cost to the live feed alone: about 5 weighted calls.
 #
-# The run deliberately takes over an hour: the script paces its requests so the
-# rolling hourly total stays under the cap. That is wall-clock time on a free
-# runner, not effort.
+# The script paces its own requests from the estimated cost, so a 10-year build
+# takes about half an hour and a 30-year one about ninety minutes. That is
+# wall-clock time on a free runner, not effort.
+#
+# Runs merge into data/climate.json rather than replacing it, so building one
+# period leaves the others intact.
 
 on:
   schedule:
@@ -19,9 +22,9 @@ on:
   workflow_dispatch:
     inputs:
       period:
-        description: 'Normals period to build ("all" for every period — takes ~3.5 h)'
+        description: 'Normals period to build ("all" for every period — several hours)'
         required: false
-        default: '1996-2025'
+        default: '2016-2025'
         type: string
       home:
         description: 'Single home id (nmb, bonita, rockaway). Blank builds all three.'
@@ -39,7 +42,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,7 +57,7 @@ jobs:
         run: |
           set +e
           node scripts/build-climate.mjs \
-            --period "${{ inputs.period || '1996-2025' }}" \
+            --period "${{ inputs.period || '2016-2025' }}" \
             ${{ inputs.home && format('--home {0}', inputs.home) || '' }}
           code=$?
           set -e

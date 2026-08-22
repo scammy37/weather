@@ -89,11 +89,20 @@ const MONTHS_FULL = ['January','February','March','April','May','June',
    Normals periods. ERA5 lags real time by ~5 days, so end dates are fixed.
    ------------------------------------------------------------------------- */
 const PERIODS = {
-  '1991-2020': { start: '1991-01-01', end: '2020-12-31', label: '1991–2020 (WMO standard normals)', years: 30 },
+  '2016-2025': { start: '2016-01-01', end: '2025-12-31', label: '2016–2025 (recent 10 years)',      years: 10 },
+  '2011-2025': { start: '2011-01-01', end: '2025-12-31', label: '2011–2025 (recent 15 years)',      years: 15 },
   '1996-2025': { start: '1996-01-01', end: '2025-12-31', label: '1996–2025 (latest 30 years)',      years: 30 },
-  '2011-2025': { start: '2011-01-01', end: '2025-12-31', label: '2011–2025 (recent 15 years)',      years: 15 }
+  '1991-2020': { start: '1991-01-01', end: '2020-12-31', label: '1991–2020 (WMO standard normals)', years: 30 }
 };
-const DEFAULT_PERIOD = '1996-2025';
+
+/* Ten recent years is the default deliberately. It costs a third of a 30-year
+   pull, and it describes the climate these homes have now rather than averaging
+   in cooler years from the late 1990s. The trade is precision: a monthly mean
+   lands within about ±1.6°F rather than ±0.9°F, and the record high/low charts
+   read roughly 2.5°F milder simply because ten years offers fewer chances to
+   catch an extreme. The longer windows stay one click away for when the fuller
+   record is what you want. */
+const DEFAULT_PERIOD = '2016-2025';
 
 /* Sea-surface temperature is an hourly-only variable in the Marine API, so its
    climatology is built from a shorter window to keep the payload sane. */

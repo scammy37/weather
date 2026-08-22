@@ -54,8 +54,9 @@ ok('has a generated timestamp', typeof j.generated === 'string' && !isNaN(Date.p
 ok('names its source', /Open-Meteo/.test(j.source) && /ERA5/.test(j.source));
 ok('carries all three homes', Object.keys(j.homes).sort().join() === 'bonita,nmb,rockaway',
    Object.keys(j.homes).join());
-ok('--period all carries all three periods per home',
-   Object.values(j.homes).every(h => Object.keys(h).length === 3),
+const allPeriods = Object.keys(createRequire(import.meta.url)(path.join(ROOT, 'js/config.js')).PERIODS);
+ok(`--period all carries every configured period (${allPeriods.length})`,
+   Object.values(j.homes).every(h => Object.keys(h).sort().join() === allPeriods.slice().sort().join()),
    JSON.stringify(Object.entries(j.homes).map(([k, v]) => k + ':' + Object.keys(v).length)));
 
 const set = j.homes.nmb['1996-2025'];
@@ -105,21 +106,51 @@ ok('builds only the default period by default',
      && Object.keys(h)[0] === cfg.DEFAULT_PERIOD),
    JSON.stringify(Object.values(dj.homes).map(h => Object.keys(h))));
 ok('still covers all three homes', Object.keys(dj.homes).length === 3);
+ok('the default period is the 10-year window', cfg.DEFAULT_PERIOD === '2016-2025', cfg.DEFAULT_PERIOD);
+ok('10 years is what the default set actually spans',
+   cfg.PERIODS[cfg.DEFAULT_PERIOD].years === 10);
 const defaultCost = weighted - before;
 ok('default run fits inside the 10,000/day free-tier cap', defaultCost < 10000,
    `${defaultCost.toFixed(0)} weighted calls`);
-/* The raw cost EXCEEDS 5,000, so the hourly cap is only respected because the
-   script spaces its requests out. Assert the paced rate, not the total. */
-const PAUSE_S = 90, httpReqs = 3 * 6 + 3 * 11;      // matches the script's default
-const runtimeHrs = (httpReqs * PAUSE_S) / 3600;
-const perHour = defaultCost / runtimeHrs;
-ok('pacing keeps the rolling hourly rate under 5,000', perHour < 5000,
-   `${perHour.toFixed(0)}/hour over ${(runtimeHrs * 60).toFixed(0)} min`);
-ok('and the raw total would have exceeded it unpaced', defaultCost > 5000,
-   `${defaultCost.toFixed(0)} — pacing is load-bearing, not decorative`);
-console.log(`  → default build costs ~${defaultCost.toFixed(0)} weighted calls`);
-console.log(`  → paced: ~${perHour.toFixed(0)}/hour over ${(runtimeHrs * 60).toFixed(0)} min (cap 5,000/hour)`);
+/* With the 10-year default the whole build now fits inside the hourly cap on
+   its own — the reason it was over before. Pacing still matters, but for the
+   per-minute cap: one 10-year chunk is worth ~444 against a 600/minute limit,
+   so two cannot share a minute. */
+ok('the default build fits under the 5,000/hour cap without pacing', defaultCost < 5000,
+   `${defaultCost.toFixed(0)} weighted calls`);
+const W = (d, v) => (d / 14) * (v / 10);
+const heaviestChunk = W(3653, 17);
+ok('the heaviest single request fits inside the 600/minute cap', heaviestChunk < 600,
+   `${heaviestChunk.toFixed(0)}`);
+ok('but two of them do not, so per-request pacing is still required',
+   heaviestChunk * 2 > 600, `${(heaviestChunk * 2).toFixed(0)} in one minute`);
+console.log(`  → default build costs ~${defaultCost.toFixed(0)} weighted calls (was ~5,510 at 30 years)`);
+console.log(`  → heaviest request ${heaviestChunk.toFixed(0)} of the 600/minute cap`);
 fs.rmSync(defPath, { force: true });
+
+/* Building one period must not discard the others already on disk. */
+console.log('\n\x1b[1mruns merge instead of overwriting\x1b[0m');
+const mergePath = path.join(ROOT, 'test', 'shots', 'climate-merge.json');
+fs.copyFileSync(outPath, mergePath);                 // starts with all periods
+const beforePeriods = Object.keys(JSON.parse(fs.readFileSync(mergePath, 'utf8')).homes.nmb).sort();
+process.argv = [process.argv[0], 'build-climate.mjs', '--pause', '0',
+                '--period', '2011-2025', '--home', 'nmb', '--out', mergePath];
+process.exit = c => { exitCode = c; };
+console.log = () => {};
+await import('../scripts/build-climate.mjs?merge');
+console.log = origLog;
+process.exit = origExit;
+const mj = JSON.parse(fs.readFileSync(mergePath, 'utf8'));
+ok('rebuilding one period keeps the others for that home',
+   Object.keys(mj.homes.nmb).sort().join() === beforePeriods.join(),
+   `${Object.keys(mj.homes.nmb).sort().join()} vs ${beforePeriods.join()}`);
+ok('untouched homes survive untouched',
+   Object.keys(mj.homes.bonita).length === beforePeriods.length,
+   String(Object.keys(mj.homes.bonita).length));
+ok('the rebuilt period is present and complete',
+   mj.homes.nmb['2011-2025'].rows.length === 12);
+ok('all three homes still in the file', Object.keys(mj.homes).length === 3);
+fs.rmSync(mergePath, { force: true });
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

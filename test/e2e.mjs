@@ -7,9 +7,16 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { archiveResponse, forecastResponse, marineResponse, airResponse } from './mock.mjs';
+import { createRequire } from 'module';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHOTS = path.join(ROOT, 'test', 'shots');
+
+/* Read the real config so period-dependent expectations follow it rather than
+   being hardcoded — the default has already changed once. */
+const CFG = createRequire(import.meta.url)(path.join(ROOT, 'js/config.js'));
+const DEFAULT_PERIOD = CFG.DEFAULT_PERIOD;
+const DEFAULT_CHUNKS = Math.ceil(CFG.PERIODS[DEFAULT_PERIOD].years / 10);
 
 let pass = 0, fail = 0;
 const results = [];
@@ -104,9 +111,9 @@ async function main() {
 
   console.log('\n\x1b[1m3. Climate normals build\x1b[0m');
   await page.waitForSelector('#kpis .kpi', { timeout: 90000 });
-  ok('archive core requested (3 decade chunks for a 30-year period)',
-     calls.archiveCore >= 3, `${calls.archiveCore}`);
-  ok('extended variables requested separately', calls.archiveExt >= 3, `${calls.archiveExt}`);
+  ok(`archive core requested (${DEFAULT_CHUNKS} decade chunk(s) for ${CFG.PERIODS[DEFAULT_PERIOD].years} years)`,
+     calls.archiveCore >= DEFAULT_CHUNKS, `${calls.archiveCore}`);
+  ok('extended variables requested separately', calls.archiveExt >= DEFAULT_CHUNKS, `${calls.archiveExt}`);
   ok('marine archive requested', calls.marineArchive >= 5, `${calls.marineArchive}`);
   const kpiCount = (await page.$$('#kpis .kpi')).length;
   ok('KPI cards rendered', kpiCount >= 18, `${kpiCount} cards`);
@@ -219,11 +226,13 @@ async function main() {
   await page.click('.tab[data-id="nmb"]');
   await page.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 90000 });
   const before = calls.archiveCore;
-  await page.selectOption('#selPeriod', '2011-2025');
-  await page.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 90000 });
+  const altPeriod = Object.keys(CFG.PERIODS).find(k => k !== DEFAULT_PERIOD);
+  await page.selectOption('#selPeriod', altPeriod);
+  await page.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 120000 });
   ok('changing the period refetches the archive', calls.archiveCore > before);
-  ok('table note names the new period', (await page.textContent('#tableNote')).includes('2011'));
-  await page.selectOption('#selPeriod', '1996-2025');
+  ok('table note names the new period',
+     (await page.textContent('#tableNote')).includes(altPeriod.slice(0, 4)));
+  await page.selectOption('#selPeriod', DEFAULT_PERIOD);
   await page.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 90000 });
 
   console.log('\n\x1b[1m12. Caching\x1b[0m');
@@ -247,7 +256,8 @@ async function main() {
   const csv = fs.readFileSync(csvPath, 'utf8');
   const csvLines = csv.trim().split('\n');
   ok('CSV filename names the location and period',
-     /nmb-climate-normals-1996-2025\.csv/.test(download.suggestedFilename()), download.suggestedFilename());
+     download.suggestedFilename() === `nmb-climate-normals-${DEFAULT_PERIOD}.csv`,
+     download.suggestedFilename());
   ok('CSV has a header plus 12 month rows', csvLines.length >= 20, `${csvLines.length} lines`);
   ok('CSV names the data source', csv.includes('Open-Meteo'));
   ok('CSV rows carry values, not blanks',
@@ -362,7 +372,8 @@ async function main() {
 
   /* Switching to a period the snapshot lacks must fall back, and say so. */
   const snapJson = JSON.parse(fs.readFileSync(snapPath, 'utf8'));
-  for (const h of Object.values(snapJson.homes)) delete h['2011-2025'];
+  const missingPeriod = Object.keys(CFG.PERIODS).find(k => k !== DEFAULT_PERIOD);
+  for (const h of Object.values(snapJson.homes)) delete h[missingPeriod];
   fs.writeFileSync(snapPath, JSON.stringify(snapJson));
   const sp2 = await snapCtx.newPage();
   let archiveHits2 = 0;
@@ -373,7 +384,7 @@ async function main() {
   await sp2.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
   await sp2.waitForSelector('#kpis .kpi', { timeout: 30000 });
   ok('default period still costs no archive requests', archiveHits2 === 0, `${archiveHits2}`);
-  await sp2.selectOption('#selPeriod', '2011-2025');
+  await sp2.selectOption('#selPeriod', missingPeriod);
   await sp2.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 120000 });
   ok('a missing period falls back to building live', archiveHits2 > 0, `${archiveHits2}`);
   ok('and warns that it was built live',
@@ -397,7 +408,7 @@ async function main() {
   await rp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
   await rp.waitForSelector('#kpis .kpi', { timeout: 30000 });
   const rlStart = Date.now();
-  await rp.selectOption('#selPeriod', '2011-2025');
+  await rp.selectOption('#selPeriod', missingPeriod);
   await rp.waitForSelector('#climateStatus .banner', { timeout: 60000 });
   const rlText = await rp.textContent('#climateStatus');
   ok('an hourly quota rejection is not retried in a loop', Date.now() - rlStart < 30000,
