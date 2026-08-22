@@ -1,0 +1,30 @@
+name: Investigate hot-day counts
+
+# Manual only. The sandbox this is developed in has no outbound access to the
+# weather APIs, so measurements against real sources have to run here.
+on:
+  workflow_dispatch:
+    inputs:
+      home:
+        description: 'Limit to one home (blank = all three)'
+        required: false
+        default: ''
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Compare every candidate source against station observations
+        run: |
+          node scripts/investigate-hotdays.mjs \
+            ${{ inputs.home && format('--home {0}', inputs.home) || '' }} \
+            --out /tmp/hotdays.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hotdays-investigation
+          path: /tmp/hotdays.json
+          if-no-files-found: warn
