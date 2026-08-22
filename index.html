@@ -195,13 +195,24 @@
   /* Three equal squares, one per home. Square because the NWS loop is square
      with the station at its centre: any other aspect ratio throws away range
      in one direction. */
+  /* Three across, and they STAY three across. The previous breakpoint stacked
+     them below 1080px, so anyone whose window was not near-maximised saw three
+     radars on top of each other instead of side by side. They only stack on a
+     phone, where three across would be 100px each. */
   .rr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
-  .rr-cell { display:flex; flex-direction:column; gap:6px; min-width:0; align-items:center; }
-  .rr-name { font-size:.78rem; font-weight:700; color:var(--ink2); align-self:flex-start; }
-  /* Capped: at full width these are 405px squares, which is 400px of radar
-     before the reader reaches a single temperature. 300 is legible and leaves
-     the quick-reference table on screen. */
-  .rr-slot { width:100%; max-width:300px; }
+  /* Square and label centred in the column. Left-aligned, a 140px square in a
+     440px column reads as three things pushed to one side rather than three
+     things arranged. */
+  .rr-cell { display:flex; flex-direction:column; gap:7px; min-width:0; align-items:center; }
+  .rr-name {
+    font-size:.78rem; font-weight:700; color:var(--ink2); text-align:center;
+    max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  /* Sized so this panel is the same height as the quick-reference panel above
+     it — 140px of square plus 108px of heading, label and padding comes to the
+     247px that block occupies. An uncapped square is 405px, which is more
+     radar than the rest of the section put together. */
+  .rr-slot { width:100%; max-width:140px; }
   .ov-radar-btn {
     display:block; width:100%; aspect-ratio:1/1; padding:0; overflow:hidden; position:relative;
     border:1px solid var(--border); border-radius:11px; background:var(--surface2);
@@ -223,12 +234,11 @@
     display:flex; align-items:center; justify-content:center;
     color:var(--muted); font-size:.72rem; background:var(--surface2);
   }
-  /* Below the three-across breakpoint they stack, and a full-width square is
-     enormous — cap it so the page does not become three screens of radar. */
-  @media(max-width:1080px){
+  /* Only on a phone, where three across would be about 100px each. */
+  @media(max-width:560px){
     .rr-grid { grid-template-columns:1fr; }
     .rr-cell { align-items:center; }
-    .rr-slot { max-width:360px; }
+    .rr-slot { max-width:320px; }
     .rr-name { align-self:flex-start; }
   }
 
@@ -529,13 +539,13 @@
   <span id="footMeta"></span>
 </footer>
 
-<script src="js/config.js?v=ab7d7db6ec"></script>
-<script src="js/units.js?v=ab7d7db6ec"></script>
-<script src="js/solar.js?v=ab7d7db6ec"></script>
-<script src="js/api.js?v=ab7d7db6ec"></script>
-<script src="js/climate.js?v=ab7d7db6ec"></script>
-<script src="js/charts.js?v=ab7d7db6ec"></script>
-<script src="js/app.js?v=ab7d7db6ec"></script>
+<script src="js/config.js?v=ac53a932a9"></script>
+<script src="js/units.js?v=ac53a932a9"></script>
+<script src="js/solar.js?v=ac53a932a9"></script>
+<script src="js/api.js?v=ac53a932a9"></script>
+<script src="js/climate.js?v=ac53a932a9"></script>
+<script src="js/charts.js?v=ac53a932a9"></script>
+<script src="js/app.js?v=ac53a932a9"></script>
 <script>
   /* Progressive install + offline shell. Skipped on file:// where service
      workers are not permitted, and non-fatal if registration is refused. */

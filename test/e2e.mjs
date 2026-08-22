@@ -585,20 +585,30 @@ async function main() {
                              null, { timeout: 25000 });
   ok('the radar row holds one radar per home', (await page.$$('#radarRow .ov-radar-btn')).length === 3);
   ok('no radar is left inside the home cards', (await page.$$('.ov-card .ov-radar-btn')).length === 0);
-  ok('the row comes before the quick-reference table',
+  ok('the row sits below the quick-reference table',
      await page.evaluate(() => {
        const r = document.getElementById('radarRow'), q = document.querySelector('table.qr');
-       return !!(r && q) && (r.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+       return !!(r && q) && r.getBoundingClientRect().top > q.getBoundingClientRect().top;
      }));
-
-  const boxes = await page.$$eval('#radarRow .ov-radar-btn', bs => bs.map(b => {
-    const r = b.getBoundingClientRect();
-    return { w: Math.round(r.width), h: Math.round(r.height) };
+  /* Same visual weight as the block above it, rather than towering over it. */
+  const panelH = await page.evaluate(() => ({
+    radar: Math.round(document.getElementById('radarRow').getBoundingClientRect().height),
+    quick: Math.round(document.querySelector('table.qr').closest('.panel').getBoundingClientRect().height)
   }));
+  ok('the radar panel is the same height as the quick-reference panel',
+     Math.abs(panelH.radar - panelH.quick) <= 12, JSON.stringify(panelH));
+
+  const readBoxes = pg => pg.$$eval('#radarRow .ov-radar-btn', bs => bs.map(b => {
+    const r = b.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) };
+  }));
+  const boxes = await readBoxes(page);
   ok('every radar is square', boxes.every(b => Math.abs(b.w - b.h) <= 1), JSON.stringify(boxes));
   ok('all three are the same size',
      new Set(boxes.map(b => b.w)).size === 1, JSON.stringify(boxes.map(b => b.w)));
-  ok('and none is so small it shows nothing', boxes.every(b => b.w >= 180), JSON.stringify(boxes));
+  ok('and none is so small it shows nothing', boxes.every(b => b.w >= 120), JSON.stringify(boxes));
+  ok('the three sit on one row rather than stacked',
+     new Set(boxes.map(b => b.top)).size === 1, JSON.stringify(boxes.map(b => b.top)));
 
   const cells = await page.$$eval('#radarRow .rr-cell', cs => cs.map(c => ({
     name: (c.querySelector('.rr-name') || {}).textContent || '',
@@ -645,6 +655,25 @@ async function main() {
   ok('a square opens from the keyboard too', (await page.$$('#radarModal')).length === 1);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
+
+  /* The regression that actually reached the user: a breakpoint at 1080px
+     stacked the three radars vertically, so anyone whose window was not
+     near-maximised saw them on top of each other. Laptop widths are checked
+     explicitly now rather than assumed from one 1440px screenshot. */
+  for (const w of [1280, 1024, 860]) {
+    await page.setViewportSize({ width: w, height: 1000 });
+    await page.waitForTimeout(250);
+    const b = await readBoxes(page);
+    ok(`at ${w}px the three radars are still side by side`,
+       b.length === 3 && new Set(b.map(x => x.top)).size === 1, JSON.stringify(b.map(x => x.top)));
+    ok(`at ${w}px they are still square and equal`,
+       b.every(x => Math.abs(x.w - x.h) <= 1) && new Set(b.map(x => x.w)).size === 1,
+       JSON.stringify(b));
+    ok(`at ${w}px the page does not scroll sideways`,
+       await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth <= 1));
+  }
+  await page.setViewportSize(CTX.viewport);
+  await page.waitForTimeout(250);
 
   await page.click('.tab[data-id="nmb"]');
   /* A single home still gets the full panel, with its own station. */

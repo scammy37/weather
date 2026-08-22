@@ -781,8 +781,8 @@ function closeRadarViewer() {
    is for going deeper, not for the basics.
    ------------------------------------------------------------------------- */
 function renderOverview(host) {
-  renderRadarRow(host);
   renderQuickReference(host);
+  renderRadarRow(host);
 
   /* One card per home. */
   const grid = el('div', 'ov-grid');
