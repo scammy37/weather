@@ -233,6 +233,30 @@ inspectable rather than trusted.
 | Precomputed normals | Built live in the browser, with the cost stated |
 | NOAA validation | Skipped; the build still completes |
 
+### How this is verified
+
+The curated suites test what someone thought to test, which is how defects kept
+surviving. `test/crawl.mjs` is mechanical instead: it reads the interactive
+elements out of the DOM and exercises **all** of them — every tab, every option
+of every dropdown, every button, every sortable column, every KPI card, a sample
+of every chart's hover marks — in light and dark mode, at three viewport widths.
+After each interaction it asserts the page did not throw, did not render a
+placeholder, did not blank, and did not overflow. About 3,400 checks.
+
+Its detectors are themselves verified by planting defects and confirming each is
+caught. That process found the crawl was **half blind** on its first pass:
+
+- `/\bNaN\b/` never matched, because `innerText` concatenates a label onto its
+  value — a broken tile reads `HumidityNaN%`, and `y`/`N` are both word
+  characters, so there is no boundary. It reported 3,057 passing checks against
+  a page visibly displaying NaN.
+- The JS-error window opened *after* the interaction had already run, so a
+  handler that threw was never counted as a new error.
+- `textContent` includes `<script>` contents, so the page's own inline JS
+  tripped the "unrendered code" detector.
+
+A test suite that has not been shown to fail has not been shown to work.
+
 ### Definitions used
 
 | Term | Definition |
@@ -280,6 +304,7 @@ way everywhere rather than implying otherwise.
 | `test/unit.mjs` | 94 assertions on the aggregation maths |
 | `test/audit.mjs` | Reads back every rendered value and checks its unit and plausible range |
 | `test/spot-check.mjs` | The real committed data against published climate values for these three places |
+| `test/crawl.mjs` | Exhaustive interaction crawl — every tab, every dropdown option, every button, every column, in light and dark, at three widths |
 | `test/e2e.mjs` | 146 browser assertions across 27 groups, against mocked Open-Meteo and NWS |
 | `test/build-script.mjs` | 41 assertions on the precompute script, its quota maths and merge behaviour |
 | `test/validate-script.mjs` | 13 assertions on the bias maths, including that the verdict flips when the models swap places |
@@ -300,6 +325,7 @@ A server is required — browsers block `fetch()` from `file://` URLs.
 ## Running the tests
 
 ```bash
+node test/crawl.mjs                      # exhaustive interaction crawl (slow; --fast to sample)
 node test/unit.mjs                       # aggregation maths, no network
 node test/build-script.mjs               # precompute script + quota maths, mocked API
 node test/validate-script.mjs           # NOAA-comparison maths, mocked sources

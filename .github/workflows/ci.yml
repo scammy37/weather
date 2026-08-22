@@ -35,6 +35,15 @@ jobs:
       - run: node test/unit.mjs           # climatology maths
       - run: node test/build-script.mjs   # precompute + quota maths
       - run: node test/validate-script.mjs # NOAA-comparison maths
+      - name: Install Playwright
+        run: npm install --no-save playwright && npx playwright install --with-deps chromium
+      - name: Exhaustive interaction crawl
+        run: node test/crawl.mjs --fast
+      - name: End-to-end suite
+        run: node test/e2e.mjs
+      - name: Rendered-value audit
+        run: node test/audit.mjs
+
       - name: Spot-check the committed data
         # Non-blocking here: the data can legitimately lag the code between
         # rebuilds. The climate workflow gates it properly.
