@@ -9,8 +9,10 @@
    hostage by the much larger archive pull.
    =========================================================================== */
 
+const ALL = 'all';                 // the three-up overview, not a location
+
 const S = {
-  locId:     LOCATIONS[0].id,
+  locId:     ALL,
   period:    DEFAULT_PERIOD,
   group:     'all',
   month:     -1,                 // focus month, -1 = none
@@ -25,7 +27,10 @@ const S = {
 
 const $  = id => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
-const loc = id => LOCATIONS.find(l => l.id === (id || S.locId));
+const isAll = () => S.locId === ALL;
+/* Falls back to the first home so anything that needs a concrete location
+   (time zone, coordinates) still has one while the overview is showing. */
+const loc = id => LOCATIONS.find(l => l.id === (id || S.locId)) || LOCATIONS[0];
 const climKey = (id, p) => `${id}|${p}`;
 const curClim = () => S.clim[climKey(S.locId, S.period)] || null;
 
@@ -56,11 +61,13 @@ async function init() {
   $('app').hidden = false;
   renderLive();
   renderBanners();
+  renderClimate();      /* overview mode has no loadClimate() to render it */
   renderDiagnostics();
   renderFooter();
 
-  /* Normals are heavier — start after the page is interactive. */
-  loadClimate(S.locId, S.period);
+  /* Normals are heavier — start after the page is interactive. The overview is
+     the default view, so the comparison set is what needs warming. */
+  if (isAll()) loadCompareSet(); else loadClimate(S.locId, S.period);
 
   window.addEventListener('resize', debounce(() => { renderCharts(); renderCompare(); renderLive(); }, 180));
 }
@@ -80,6 +87,15 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 function buildTabs() {
   const nav = $('tabs');
   nav.innerHTML = '';
+
+  const all = el('button', 'tab' + (isAll() ? ' on' : ''));
+  all.type = 'button';
+  all.dataset.id = ALL;
+  all.setAttribute('aria-current', isAll() ? 'true' : 'false');
+  all.innerHTML = `<span aria-hidden="true">🏘️</span><span>All three homes</span>`;
+  all.addEventListener('click', () => selectLocation(ALL));
+  nav.appendChild(all);
+
   LOCATIONS.forEach(l => {
     const b = el('button', 'tab' + (l.id === S.locId ? ' on' : ''));
     b.type = 'button';
@@ -135,9 +151,13 @@ function wireControls() {
   $('selGroup').addEventListener('change', e => { S.group = e.target.value; renderCharts(); });
   $('selMonth').addEventListener('change', e => selectMonth(+e.target.value));
   $('selCompare').addEventListener('change', e => { S.compareKey = e.target.value; renderCompare(); });
-  $('btnCsv').addEventListener('click', exportCSV);
+  $('btnCsv').addEventListener('click', () => {
+    if (isAll()) { alert('Pick a single home from the tabs first — the CSV covers one home at a time.'); return; }
+    exportCSV();
+  });
   $('btnCloseDetail').addEventListener('click', () => selectMonth(-1));
   $('btnRebuild').addEventListener('click', () => {
+    if (isAll()) { alert('Pick a single home from the tabs first.'); return; }
     delete S.clim[climKey(S.locId, S.period)];
     try { localStorage.removeItem(cacheKey('clim', S.locId, S.period)); } catch (_) {}
     loadClimate(S.locId, S.period, true);
@@ -166,7 +186,7 @@ function selectLocation(id) {
   S.locId = id; S.month = -1; S.fcDay = -1;
   $('selMonth').value = '-1';
   buildTabs(); renderLive(); renderClimate(); renderBanners();
-  loadClimate(S.locId, S.period);
+  if (isAll()) loadCompareSet(); else loadClimate(S.locId, S.period);
 }
 
 function selectMonth(m) {
@@ -211,6 +231,8 @@ function renderLive() {
     const c = S.live[x.id] && S.live[x.id].wx && S.live[x.id].wx.current;
     if (t) t.textContent = c && typeof c.temperature_2m === 'number' ? `${Math.round(c.temperature_2m)}°` : '—';
   });
+
+  if (isAll()) { renderOverview(host); return; }
 
   if (!d || d.error || !d.wx) {
     host.appendChild(el('div', 'banner err',
@@ -315,6 +337,148 @@ function renderLive() {
 
   renderForecast(host, l, d);
   renderHourly(host, l, d);
+}
+
+/* ---------------------------------------------------------------------------
+   Overview — all three homes at once.
+
+   The default view. Every home's current conditions, today's range, the ocean,
+   sun times and a compact week are visible without a click; selecting a home
+   is for going deeper, not for the basics.
+   ------------------------------------------------------------------------- */
+function renderOverview(host) {
+  const live = LOCATIONS.map(l => ({ l, d: S.live[l.id] }))
+    .map(o => ({ ...o, cur: o.d && o.d.wx && o.d.wx.current }));
+  const withData = live.filter(o => o.cur && typeof o.cur.temperature_2m === 'number');
+
+  /* Headline strip: the comparisons worth making across three homes. */
+  if (withData.length > 1) {
+    const warm = withData.reduce((a, b) => b.cur.temperature_2m > a.cur.temperature_2m ? b : a);
+    const cool = withData.reduce((a, b) => b.cur.temperature_2m < a.cur.temperature_2m ? b : a);
+    const spread = warm.cur.temperature_2m - cool.cur.temperature_2m;
+    const wet = withData.filter(o => (o.cur.precipitation || 0) > 0);
+    const oceans = LOCATIONS.map(l => ({ l, m: S.live[l.id] && S.live[l.id].marine && S.live[l.id].marine.current }))
+      .filter(o => o.m && typeof o.m.sea_surface_temperature === 'number' && !o.l.marine.proxy);
+    const bestOcean = oceans.length
+      ? oceans.reduce((a, b) => b.m.sea_surface_temperature > a.m.sea_surface_temperature ? b : a) : null;
+
+    const facts = [
+      ['Warmest right now', `${warm.l.emoji} ${warm.l.short}`, `${Math.round(warm.cur.temperature_2m)}°F`],
+      ['Coolest right now', `${cool.l.emoji} ${cool.l.short}`, `${Math.round(cool.cur.temperature_2m)}°F`],
+      ['Spread between homes', `${Math.round(spread)}°F`, spread > 25 ? 'a different season entirely' : spread > 12 ? 'a real difference' : 'much of a muchness'],
+      ['Raining now', wet.length ? wet.map(o => o.l.short).join(', ') : 'Nowhere', wet.length ? `${wet.length} of ${withData.length} homes` : 'all three dry']
+    ];
+    if (bestOcean) facts.push(['Warmest water',
+      `${bestOcean.l.emoji} ${bestOcean.l.short}`,
+      `${fmtNum(bestOcean.m.sea_surface_temperature, 1)}°F · ${swimLabel(bestOcean.m.sea_surface_temperature)}`]);
+
+    const strip = el('section', 'panel');
+    strip.innerHTML = `<div class="panel-h"><h2>📍 Across all three homes</h2>
+        <span class="note">Updated ${esc(relTime(Math.max(...live.map(o => (o.d && o.d.at) || 0))))}</span></div>
+      <div class="panel-b"><div class="stat-grid">${facts.map(([a, b, c]) =>
+        `<div class="stat"><div class="stat-l">${esc(a)}</div><div class="stat-v">${esc(String(b))}</div>
+         <div class="stat-s">${esc(String(c))}</div></div>`).join('')}</div></div>`;
+    host.appendChild(strip);
+  }
+
+  /* One card per home. */
+  const grid = el('div', 'ov-grid');
+  LOCATIONS.forEach(l => {
+    const d = S.live[l.id];
+    const card = el('article', 'ov-card');
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Open the full dashboard for ${l.name}, ${l.state}`);
+    card.style.borderTopColor = accentOf(l);
+
+    if (!d || d.error || !d.wx || !d.wx.current) {
+      card.innerHTML = `<div class="ov-head"><span class="ov-emoji">${l.emoji}</span>
+          <div><div class="ov-name">${esc(l.name)}, ${l.state}</div>
+          <div class="ov-blurb">${esc(l.blurb)}</div></div></div>
+        <div class="banner err" style="margin:14px 0 0"><span class="bico">⚠️</span>
+          <div>Live feed unavailable.<br>${esc(d && d.error || 'No response.')}</div></div>`;
+      grid.appendChild(card);
+      card.addEventListener('click', () => selectLocation(l.id));
+      return;
+    }
+
+    const cur = d.wx.current, daily = d.wx.daily || {}, hourly = d.wx.hourly || {};
+    const w = wmoInfo(cur.weather_code, cur.is_day == null ? 1 : cur.is_day);
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: l.tz });
+    let ti = (daily.time || []).indexOf(todayISO);
+    if (ti < 0) ti = Math.min(2, (daily.time || []).length - 1);
+
+    const sun = sunTimes(new Date(), l.lat, l.lon);
+    const riseMin = localMinutes(sun.sunrise, l.tz), setMin = localMinutes(sun.sunset, l.tz);
+    const nowMin = localMinutes(new Date(), l.tz);
+    const poles = isDark() ? TEMP_POLES.dark : TEMP_POLES.light;
+    const mc = d.marine && d.marine.current;
+    const dewNow = pickHourly(hourly, 'dew_point_2m', l.tz);
+
+    /* Compact week: icon over high/low, seven across. */
+    const times = daily.time || [];
+    let start = times.indexOf(todayISO); if (start < 0) start = 0;
+    let week = '';
+    for (let i = start; i < times.length && i < start + 7; i++) {
+      const wi = wmoInfo(daily.weather_code?.[i], 1);
+      const dt = new Date(times[i] + 'T12:00:00');
+      const pop = daily.precipitation_probability_max?.[i];
+      week += `<div class="ov-day" title="${esc(wi.label)}">
+        <div class="ov-dow">${i === start ? 'Today' : dt.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+        <div class="ov-dico" aria-hidden="true">${wi.icon}</div>
+        <div class="ov-dhi">${fmtNum(daily.temperature_2m_max?.[i], 0)}°</div>
+        <div class="ov-dlo">${fmtNum(daily.temperature_2m_min?.[i], 0)}°</div>
+        <div class="ov-dpop">${pop > 20 ? Math.round(pop) + '%' : ''}</div>
+      </div>`;
+    }
+
+    const chips = [
+      ['💧', `${fmtNum(cur.relative_humidity_2m, 0)}%`, 'Humidity'],
+      ['🌫️', `${fmtNum(dewNow, 0)}°`, 'Dew point'],
+      ['💨', `${fmtNum(cur.wind_speed_10m, 0)} ${degToCompass(cur.wind_direction_10m)}`, 'Wind mph'],
+      ['☁️', `${fmtNum(cur.cloud_cover, 0)}%`, 'Cloud cover']
+    ];
+    if (mc && typeof mc.sea_surface_temperature === 'number')
+      chips.push(['🌊', `${fmtNum(mc.sea_surface_temperature, 0)}°`,
+        l.marine.proxy ? `${l.marine.proxyName} — ${l.marine.proxyDistanceMi} mi away` : 'Water temperature']);
+
+    card.innerHTML = `
+      <div class="ov-head">
+        <span class="ov-emoji" aria-hidden="true">${l.emoji}</span>
+        <div>
+          <div class="ov-name">${esc(l.name)}, ${l.state}</div>
+          <div class="ov-blurb">${esc(l.blurb)}</div>
+        </div>
+      </div>
+      <div class="ov-now">
+        <span class="ov-ico" aria-hidden="true">${w.icon}</span>
+        <span class="ov-temp">${fmtNum(cur.temperature_2m, 0)}°</span>
+        <span class="ov-meta">
+          <span class="ov-cond">${esc(w.label)}</span>
+          <span class="ov-feels">Feels ${fmtNum(cur.apparent_temperature, 0)}°</span>
+        </span>
+      </div>
+      <div class="ov-hilo">
+        <span style="color:${poles.high}">↑ ${fmtNum(daily.temperature_2m_max?.[ti], 0)}°</span>
+        <span style="color:${poles.low}">↓ ${fmtNum(daily.temperature_2m_min?.[ti], 0)}°</span>
+        <span class="ov-pop">${fmtNum(daily.precipitation_probability_max?.[ti], 0)}% rain today</span>
+      </div>
+      <div class="ov-chips">${chips.map(([i, v, t]) =>
+        `<span class="ov-chip" title="${esc(t)}"><span aria-hidden="true">${i}</span> ${esc(v)}</span>`).join('')}</div>
+      <div class="ov-sun">🌅 ${esc(fmtMinutes(riseMin))} · 🌇 ${esc(fmtMinutes(setMin))} ·
+        ${esc(fmtDuration(sun.daylightMinutes))}${nowMin != null && riseMin != null && setMin != null
+          ? ` · ${esc(daylightProgress(nowMin, riseMin, setMin))}` : ''}</div>
+      <div class="ov-week">${week}</div>
+      <div class="ov-more">Full dashboard for ${esc(l.short)} →</div>`;
+
+    const open = () => selectLocation(l.id);
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
+    grid.appendChild(card);
+  });
+  host.appendChild(grid);
 }
 
 /* --- 7-day forecast ------------------------------------------------------ */
@@ -550,6 +714,18 @@ function compareNeedsFetch() {
 }
 
 function renderClimate() {
+  if (isAll()) {
+    $('climateStatus').innerHTML = `<div class="banner info"><span class="bico">🏘️</span><div>
+      <b>Showing all three homes.</b> The comparison below plots any measure for
+      each home on one axis. For a single home's full climate detail — every
+      chart, the KPI cards and the sortable table — pick it from the tabs at the
+      top of the page.</div></div>`;
+    $('kpis').innerHTML = ''; $('charts').innerHTML = '';
+    $('detail').classList.remove('show');
+    clearTable();
+    $('tableNote').textContent = '— pick a home above to see its monthly table';
+    return;
+  }
   const key = climKey(S.locId, S.period);
   const state = S.climState[key];
   const box = $('climateStatus');

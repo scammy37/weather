@@ -14,7 +14,14 @@ Live site: **https://scammy37.github.io/weather**
 
 ## What's on the page
 
-**⚡ Live conditions** — current temperature, feels-like, humidity, dew point, wind
+**🏘️ All three homes** — the default view. Every home's current conditions,
+today's range, humidity, dew point, wind, water temperature, sun times and a
+compact seven-day strip, all side by side without a click. Above them a summary
+strip answers the cross-home questions: warmest and coolest right now, the
+spread between them, whether it is raining anywhere, and which water is warmest.
+Click any card to open that home in full.
+
+**⚡ Live conditions** (per home) — current temperature, feels-like, humidity, dew point, wind
 and gusts, pressure, cloud cover, visibility, UV index, air quality, today's
 precipitation, and a sunrise → now → sunset progress bar. Every tab shows its
 home's current temperature, so all three are visible at a glance.
@@ -188,7 +195,7 @@ way everywhere rather than implying otherwise.
 | `manifest.json`, `icon.svg` | PWA metadata and icon |
 | `serve.py` | Local static server |
 | `test/unit.mjs` | 71 assertions on the aggregation maths |
-| `test/e2e.mjs` | 107 browser assertions across 22 groups, against a mocked Open-Meteo |
+| `test/e2e.mjs` | 119 browser assertions across 23 groups, against a mocked Open-Meteo |
 | `test/build-script.mjs` | 41 assertions on the precompute script, its quota maths and merge behaviour |
 | `test/mock.mjs` | Synthetic API responses shaped like the real ones |
 
@@ -216,7 +223,8 @@ node test/e2e.mjs --headed               # watch it run
 `test/e2e.mjs` intercepts every Open-Meteo request and serves synthetic data, so
 the suite is deterministic and needs no internet. It covers boot, the live feed,
 the forecast drill-down, the normals build, chart rendering and hover, month
-selection, table sorting, the comparison view, caching, CSV export, dark mode,
+selection, table sorting, the all-homes overview and its drill-down, the
+comparison view, caching, CSV export, dark mode,
 mobile layout, foreign time zones, rate-limit handling, the precomputed
 snapshot path (asserting **zero** archive requests), and three failure modes
 (everything down, marine down, archive down).

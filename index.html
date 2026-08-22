@@ -141,6 +141,49 @@
   .stat-v { font-size:1.12rem; font-weight:700; margin-top:4px; letter-spacing:-.01em; }
   .stat-s { font-size:.7rem; color:var(--muted); margin-top:2px; }
 
+  /* ---- all-homes overview ---------------------------------------------- */
+  /* Wider tiles in the cross-home strip: these hold place names, not numbers. */
+  #liveHost .panel .stat-grid { grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
+  .ov-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:18px; }
+  @media(max-width:1080px){ .ov-grid{ grid-template-columns:1fr; } }
+  .ov-card {
+    background:var(--surface); border:1px solid var(--border); border-top:4px solid var(--accent);
+    border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 18px 14px;
+    cursor:pointer; transition:transform .14s, box-shadow .14s;
+    display:flex; flex-direction:column; gap:11px;
+  }
+  .ov-card:hover { transform:translateY(-3px); box-shadow:0 4px 20px rgba(11,11,11,.12); }
+  body.dark .ov-card:hover { box-shadow:0 4px 22px rgba(0,0,0,.55); }
+  .ov-head { display:flex; align-items:flex-start; gap:11px; }
+  .ov-emoji { font-size:1.7rem; line-height:1.1; }
+  .ov-name { font-size:1rem; font-weight:700; letter-spacing:-.01em; }
+  .ov-blurb { font-size:.72rem; color:var(--muted); margin-top:2px; line-height:1.4; }
+  .ov-now { display:flex; align-items:center; gap:12px; }
+  .ov-ico { font-size:2.5rem; line-height:1; }
+  .ov-temp { font-size:2.7rem; font-weight:800; letter-spacing:-.035em; line-height:1; }
+  .ov-meta { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .ov-cond { font-size:.83rem; font-weight:600; color:var(--ink2); }
+  .ov-feels { font-size:.74rem; color:var(--muted); }
+  .ov-hilo { display:flex; gap:12px; align-items:baseline; font-size:.9rem; font-weight:700; flex-wrap:wrap; }
+  .ov-pop { font-size:.74rem; font-weight:600; color:var(--muted); margin-left:auto; }
+  .ov-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .ov-chip {
+    font-size:.73rem; font-weight:600; background:var(--surface2); border:1px solid var(--border);
+    border-radius:99px; padding:3px 9px; white-space:nowrap; color:var(--ink2);
+  }
+  .ov-sun { font-size:.72rem; color:var(--muted); line-height:1.5; }
+  .ov-week {
+    display:grid; grid-template-columns:repeat(7,1fr); gap:3px;
+    border-top:1px solid var(--border); padding-top:11px; margin-top:auto;
+  }
+  .ov-day { text-align:center; }
+  .ov-dow  { font-size:.62rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:-.01em; }
+  .ov-dico { font-size:1.05rem; margin:2px 0 1px; }
+  .ov-dhi  { font-size:.78rem; font-weight:700; }
+  .ov-dlo  { font-size:.7rem; color:var(--muted); }
+  .ov-dpop { font-size:.6rem; font-weight:700; color:var(--accent); min-height:.8em; }
+  .ov-more { font-size:.74rem; font-weight:700; color:var(--accent); text-align:right; }
+
   /* ---- forecast strip -------------------------------------------------- */
   .fc-strip { display:grid; grid-template-columns:repeat(7,1fr); gap:9px; }
   @media(max-width:860px){ .fc-strip{ grid-template-columns:repeat(4,1fr); } }

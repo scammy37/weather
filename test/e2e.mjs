@@ -27,6 +27,14 @@ function ok(name, cond, extra = '') {
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.json':'application/json',
                '.svg':'image/svg+xml', '.css':'text/css' };
 
+/* The default view is the three-home overview, which deliberately has no
+   per-home KPI cards or charts. Anything asserting those has to open a home. */
+async function openHome(pg, id = 'nmb', timeout = 120000) {
+  await pg.waitForSelector('#app:not([hidden])', { timeout: 60000 });
+  await pg.click(`.tab[data-id="${id}"]`);
+  await pg.waitForSelector('#kpis .kpi', { timeout });
+}
+
 function serve() {
   return new Promise(res => {
     const s = http.createServer((req, rep) => {
@@ -75,10 +83,39 @@ async function main() {
     json(r, archiveResponse(u));
   });
 
-  console.log('\n\x1b[1m1. Boot and live feed\x1b[0m');
+  console.log('\n\x1b[1m0. All-homes overview (the default view)\x1b[0m');
   await page.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#app:not([hidden])', { timeout: 30000 });
-  ok('app becomes visible after boot', true);
+  ok('the overview is what loads first',
+     (await page.getAttribute('.tab[data-id="all"]', 'class')).includes('on'));
+  ok('all three homes are visible without clicking', (await page.$$('.ov-card')).length === 3);
+  const ovTemps = await page.$$eval('.ov-card .ov-temp', e => e.map(x => x.textContent.trim()));
+  ok('each card shows a current temperature', ovTemps.length === 3 && ovTemps.every(t => /^-?\d+°$/.test(t)),
+     ovTemps.join(' '));
+  ok('each card shows a 7-day strip',
+     (await page.$$eval('.ov-card', cards => cards.every(c => c.querySelectorAll('.ov-day').length === 7))));
+  ok('the cross-home summary strip is present',
+     (await page.textContent('#liveHost')).includes('Across all three homes'));
+  ok('it names the warmest and coolest home',
+     (await page.textContent('#liveHost')).includes('Warmest right now') &&
+     (await page.textContent('#liveHost')).includes('Coolest right now'));
+  ok('no "NaN" anywhere in the overview', !(await page.textContent('#liveHost')).includes('NaN'));
+  ok('overview mode explains where the per-home detail lives',
+     (await page.textContent('#climateStatus')).includes('pick it from the tabs'));
+  ok('overview mode hides the single-home charts', (await page.$$('#charts .chart')).length === 0);
+  /* Clicking a card is the drill-down path. */
+  await page.click('.ov-card:nth-child(2)');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
+  ok('clicking a card opens that home',
+     !(await page.getAttribute('.tab[data-id="all"]', 'class')).includes('on'));
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
+  ok('the All tab returns to the overview', (await page.$$('.ov-card')).length === 3);
+
+  console.log('\n\x1b[1m1. Boot and live feed\x1b[0m');
+  await page.click('.tab[data-id="nmb"]');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
+  ok('a single home opens to its full live panel', true);
   ok('forecast API called once per home', calls.forecast === 3, `${calls.forecast} calls`);
   ok('marine live called once per home', calls.marineLive === 3, `${calls.marineLive} calls`);
   ok('air quality called once per home', calls.air === 3, `${calls.air} calls`);
@@ -87,7 +124,7 @@ async function main() {
   ok('hero temperature rendered', /^-?\d+°$/.test(heroTemp), heroTemp);
   ok('no "NaN" anywhere on the live panel',
      !(await page.textContent('#liveHost')).includes('NaN'));
-  ok('all three tabs show a temperature',
+  ok('all three home tabs show a temperature',
      (await page.$$eval('.tab .tmeta', els => els.map(e => e.textContent.trim())))
        .every(t => /^-?\d+°$/.test(t)));
   ok('7-day forecast shows 7 cards', (await page.$$('#fcStrip .fc')).length === 7,
@@ -243,7 +280,7 @@ async function main() {
   ok('cache stays far below the 5 MB quota', cacheBytes < 1_500_000, `${(cacheBytes / 1024).toFixed(0)} KB`);
   const beforeReload = calls.archiveCore;
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  await openHome(page, 'nmb', 30000);
   ok('a reload serves normals from cache without refetching',
      calls.archiveCore === beforeReload, `${calls.archiveCore} vs ${beforeReload}`);
 
@@ -291,6 +328,11 @@ async function main() {
   ok('page still renders when every API is down', true);
   const bannerTxt = await page2.textContent('#banners');
   ok('a clear offline banner is shown', bannerTxt.includes('No live data'), bannerTxt.slice(0, 80));
+  ok('the overview degrades to per-card notices rather than a blank page',
+     (await page2.$$('.ov-card')).length === 3 &&
+     (await page2.textContent('#liveHost')).includes('Live feed unavailable'));
+  /* The normals error belongs to a single home, so open one. */
+  await page2.click('.tab[data-id="nmb"]');
   await page2.waitForSelector('#climateStatus .banner.err', { timeout: 90000 });
   ok('normals failure is explained, not silent',
      (await page2.textContent('#climateStatus')).includes('Could not build'));
@@ -304,7 +346,7 @@ async function main() {
   await page3.route('**://archive-api.open-meteo.com/**', r => json(r, archiveResponse(r.request().url())));
   await page3.route('**://marine-api.open-meteo.com/**', r => r.abort('failed'));
   await page3.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
-  await page3.waitForSelector('#kpis .kpi', { timeout: 120000 });
+  await openHome(page3, 'nmb');
   ok('normals still build when the marine API is down',
      (await page3.$$('#charts .chart')).length > 20);
   ok('ocean charts are hidden rather than blank',
@@ -320,7 +362,7 @@ async function main() {
   await m.route('**://archive-api.open-meteo.com/**', r => json(r, archiveResponse(r.request().url())));
   await m.route('**://marine-api.open-meteo.com/**',  r => json(r, marineResponse(r.request().url())));
   await m.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
-  await m.waitForSelector('#kpis .kpi', { timeout: 120000 });
+  await openHome(m, 'nmb');
   const overflow = await m.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth);
   ok('no horizontal page overflow at 390px', overflow <= 1, `${overflow}px`);
@@ -355,7 +397,7 @@ async function main() {
     json(r, marineResponse(r.request().url()));
   });
   await sp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
-  await sp.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  await openHome(sp, 'nmb', 30000);
   ok('normals render from the snapshot', (await sp.$$('#kpis .kpi')).length >= 18);
   ok('ZERO archive requests were made', archiveHits === 0, `${archiveHits} hits`);
   ok('ZERO marine-archive requests were made', marineArchiveHits === 0, `${marineArchiveHits} hits`);
@@ -382,7 +424,7 @@ async function main() {
   await sp2.route('**://archive-api.open-meteo.com/**', r => { archiveHits2++; json(r, archiveResponse(r.request().url())); });
   await sp2.route('**://marine-api.open-meteo.com/**',  r => json(r, marineResponse(r.request().url())));
   await sp2.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
-  await sp2.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  await openHome(sp2, 'nmb', 30000);
   ok('default period still costs no archive requests', archiveHits2 === 0, `${archiveHits2}`);
   await sp2.selectOption('#selPeriod', missingPeriod);
   await sp2.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length > 0, { timeout: 120000 });
@@ -406,7 +448,7 @@ async function main() {
   }));
   fs.writeFileSync(snapPath, JSON.stringify(snapJson));
   await rp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
-  await rp.waitForSelector('#kpis .kpi', { timeout: 30000 });
+  await openHome(rp, 'nmb', 30000);
   const rlStart = Date.now();
   await rp.selectOption('#selPeriod', missingPeriod);
   await rp.waitForSelector('#climateStatus .banner', { timeout: 60000 });
@@ -432,6 +474,9 @@ async function main() {
   await tzp.route('**://marine-api.open-meteo.com/**',  r => json(r, marineResponse(r.request().url())));
   await tzp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
   await tzp.waitForSelector('#app:not([hidden])', { timeout: 30000 });
+  /* The hourly charts live in a single home's view. */
+  await tzp.click('.tab[data-id="nmb"]');
+  await tzp.waitForSelector('#hrTemp .mark', { timeout: 30000 });
 
   /* The 48-hour window must begin at the *location's* current hour, not the
      viewer's and not UTC. */
