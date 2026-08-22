@@ -24,12 +24,22 @@
 
 const API = {
   forecast: 'https://api.open-meteo.com/v1/forecast',
+  alerts:   'https://api.weather.gov/alerts/active',
   archive:  'https://archive-api.open-meteo.com/v1/archive',
   marine:   'https://marine-api.open-meteo.com/v1/marine',
   air:      'https://air-quality-api.open-meteo.com/v1/air-quality'
 };
 
 const UNITS = 'temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch';
+
+/* ERA5 runs on a ~28 km grid, so a coastal cell blends land and sea and drags
+   summer maxima down — the first build had North Myrtle Beach at an 86°F July
+   high against a published ~89°F, and 6 days a year over 90°F against a real
+   20–30. ERA5-Land is ~9 km and land-only, which should place these homes
+   properly. It is requested first and the default model is the fallback, so a
+   variable ERA5-Land does not carry can never blank the dashboard. */
+const ARCHIVE_MODEL = 'era5_land';
+const MIN_COVERAGE = 0.8;      // fraction of days that must carry a temperature
 
 /* --- diagnostics -------------------------------------------------------- */
 /* Every call lands here so the Data Sources panel can show exactly what
@@ -190,6 +200,42 @@ async function fetchAir(loc) {
 }
 
 /* -----------------------------------------------------------------------------
+   SEVERE WEATHER ALERTS — US National Weather Service.
+
+   Free, no key, CORS-enabled, and the authoritative source for watches and
+   warnings. Three properties on two coasts and one inland is exactly the case
+   where a hurricane watch or a freeze warning matters and nobody is standing
+   at the window to notice.
+
+   Failure is non-fatal: no alerts panel rather than no dashboard.
+   --------------------------------------------------------------------------- */
+async function fetchAlerts(loc) {
+  const url = `${API.alerts}?point=${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}&status=actual`;
+  const json = await apiGet(url, { label: `Weather alerts — ${loc.name}`, retries: 1, timeout: 15000 });
+  const feats = (json && json.features) || [];
+  return feats.map(f => {
+    const p = (f && f.properties) || {};
+    return {
+      id: f.id || p.id,
+      event: p.event || 'Alert',
+      severity: p.severity || 'Unknown',      // Extreme | Severe | Moderate | Minor | Unknown
+      urgency: p.urgency || '',
+      certainty: p.certainty || '',
+      headline: p.headline || '',
+      description: p.description || '',
+      instruction: p.instruction || '',
+      onset: p.onset || p.effective || null,
+      expires: p.expires || p.ends || null,
+      sender: p.senderName || ''
+    };
+  })
+  /* Most severe first, so the worst thing is the thing you read. */
+  .sort((a, b) => SEVERITY_RANK.indexOf(a.severity) - SEVERITY_RANK.indexOf(b.severity));
+}
+
+const SEVERITY_RANK = ['Extreme', 'Severe', 'Moderate', 'Minor', 'Unknown'];
+
+/* -----------------------------------------------------------------------------
    LIVE MARINE — sea-surface temperature and waves at the offshore point.
    --------------------------------------------------------------------------- */
 async function fetchMarineLive(loc) {
@@ -234,6 +280,15 @@ function mergeDaily(parts) {
   return out;
 }
 
+/* Fraction of a series that is a real number — used to reject a model that
+   answers with mostly nulls rather than an error. */
+function coverage(arr) {
+  if (!Array.isArray(arr) || !arr.length) return 0;
+  let n = 0;
+  for (const v of arr) if (typeof v === 'number' && Number.isFinite(v)) n++;
+  return n / arr.length;
+}
+
 async function fetchArchive(loc, period, onProgress) {
   const p = PERIODS[period];
   const chunks = decadeChunks(p.start, p.end);
@@ -241,17 +296,36 @@ async function fetchArchive(loc, period, onProgress) {
   let done = 0;
   const bump = label => { done++; if (onProgress) onProgress(done, total, label); };
 
-  const base = ({ start, end }, vars) =>
+  const base = ({ start, end }, vars, model) =>
     `${API.archive}?latitude=${loc.lat}&longitude=${loc.lon}&timezone=${loc.tz}`
-    + `&start_date=${start}&end_date=${end}&daily=${vars.join(',')}&${UNITS}`;
+    + `&start_date=${start}&end_date=${end}&daily=${vars.join(',')}&${UNITS}`
+    + (model ? `&models=${model}` : '');
 
   /* Core variables — required. Chunks run sequentially to stay polite to the
      free tier and to keep the progress bar honest. */
   const coreParts = [];
+  let model = ARCHIVE_MODEL, modelNote = ARCHIVE_MODEL;
   for (const c of chunks) {
-    coreParts.push(await apiGet(base(c, ARCHIVE_CORE), {
-      label: `Archive ${c.start.slice(0,4)}–${c.end.slice(0,4)} — ${loc.name}`, timeout: 60000
-    }));
+    const label = `Archive ${c.start.slice(0,4)}–${c.end.slice(0,4)} — ${loc.name}`;
+    let part = null;
+    if (model) {
+      try {
+        part = await apiGet(base(c, ARCHIVE_CORE, model), { label: `${label} [${model}]`, retries: 1, timeout: 60000 });
+        const cov = coverage(part.daily && part.daily.temperature_2m_max);
+        if (cov < MIN_COVERAGE) {
+          /* Land-only models return nulls over water. Better to notice that
+             here than to publish a table full of gaps. */
+          part = null;
+          model = null;
+          modelNote = `${ARCHIVE_MODEL} rejected (${Math.round(cov * 100)}% coverage) — using the default model`;
+        }
+      } catch (_) {
+        model = null;
+        modelNote = `${ARCHIVE_MODEL} unavailable — using the default model`;
+      }
+    }
+    if (!part) part = await apiGet(base(c, ARCHIVE_CORE, null), { label, timeout: 60000 });
+    coreParts.push(part);
     bump(`${loc.short}: ${c.start.slice(0, 4)}–${c.end.slice(0, 4)}`);
   }
 
@@ -261,7 +335,9 @@ async function fetchArchive(loc, period, onProgress) {
   for (const c of chunks) {
     if (!extOk) { bump(`${loc.short}: extended skipped`); continue; }
     try {
-      extParts.push(await apiGet(base(c, ARCHIVE_EXT), {
+      /* Extended variables stay on the default model: cloud cover and mean
+         sea-level pressure are not ERA5-Land fields. */
+      extParts.push(await apiGet(base(c, ARCHIVE_EXT, null), {
         label: `Archive extended ${c.start.slice(0,4)}–${c.end.slice(0,4)} — ${loc.name}`,
         retries: 1, timeout: 60000
       }));
@@ -279,7 +355,8 @@ async function fetchArchive(loc, period, onProgress) {
       if (k !== 'time' && v.length === daily.time.length) daily[k] = v;
     }
   }
-  return { daily, extended: extOk && extParts.length > 0, meta: coreParts[0] || {} };
+  return { daily, extended: extOk && extParts.length > 0, meta: coreParts[0] || {},
+           model: model || 'default', modelNote };
 }
 
 /* -----------------------------------------------------------------------------
@@ -407,7 +484,8 @@ function clearOurCache() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { API, apiGet, setPacing, RateLimitError, isRateLimit, limitWindow, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
+  module.exports = { API, apiGet, setPacing, coverage, ARCHIVE_MODEL, SEVERITY_RANK,
+                     RateLimitError, isRateLimit, limitWindow, fetchAlerts, fetchLive, fetchAir, fetchMarineLive, fetchArchive,
                      fetchMarineArchive, decadeChunks, mergeDaily, hourlyToDaily,
                      ARCHIVE_CORE, ARCHIVE_EXT, DIAG, cacheGet, cacheSet, cacheKey, clearOurCache };
 }

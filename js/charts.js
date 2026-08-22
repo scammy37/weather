@@ -416,6 +416,74 @@ function daylightRibbon(svg, opts) {
 }
 
 /* -----------------------------------------------------------------------------
+   trendChart — one value per year, with a least-squares fit through it.
+
+   The point is the slope, so the fit line is the emphasis and the yearly dots
+   are secondary. r² is printed alongside because a slope through scattered
+   points is not the same claim as a slope through a tight line, and the chart
+   should not let those look identical.
+   --------------------------------------------------------------------------- */
+function trendChart(svg, opts) {
+  const { years, values, trend, color, unit = '', dec = 1, height = 260, label = '' } = opts;
+  const t = T();
+  const W = chartWidth(svg), H = height;
+  const PAD = { l: 48, r: 14, t: 34, b: 30 };
+  const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
+  const nums = values.filter(nn);
+  if (nums.length < 2) { svg.setAttribute('width', W); svg.setAttribute('height', H); svg.innerHTML = emptyNote(W, H); return; }
+
+  const scale = niceTicks(Math.min(...nums), Math.max(...nums), 5);
+  const yOf = v => PAD.t + plotH - ((v - scale.min) / (scale.max - scale.min || 1)) * plotH;
+  const xOf = i => PAD.l + (years.length === 1 ? plotW / 2 : (i / (years.length - 1)) * plotW);
+
+  let dots = '', hover = '';
+  values.forEach((v, i) => {
+    if (!nn(v)) return;
+    dots += `<circle cx="${xOf(i).toFixed(1)}" cy="${yOf(v).toFixed(1)}" r="4" fill="${color}"
+      opacity="0.55" stroke="${t.ring}" stroke-width="1.5"/>`;
+  });
+  const step = plotW / Math.max(1, years.length);
+  years.forEach((y, i) => {
+    hover += `<rect class="mark" x="${(xOf(i) - step / 2).toFixed(1)}" y="${PAD.t}" width="${step.toFixed(1)}"
+      height="${plotH}" fill="transparent"
+      data-tip="${esc(`<b>${y}</b><br>${label} ${fmtVal(values[i], dec, unit)}`)}"/>`;
+  });
+
+  /* The fit, drawn across the full span. */
+  let fit = '', note = '';
+  if (trend && nn(trend.perDecade)) {
+    const idx = values.map((v, i) => [v, i]).filter(p => nn(p[0]));
+    const xs = idx.map(p => years[p[1]]), ys = idx.map(p => p[0]);
+    const mx = xs.reduce((s, v) => s + v, 0) / xs.length;
+    const my = ys.reduce((s, v) => s + v, 0) / ys.length;
+    const slope = trend.perDecade / 10;
+    const yAt = yr => my + slope * (yr - mx);
+    const x0 = xOf(0), x1 = xOf(years.length - 1);
+    const y0 = yOf(yAt(years[0])), y1 = yOf(yAt(years[years.length - 1]));
+    fit = `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"
+      stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>`;
+    const sign = trend.perDecade > 0 ? '+' : '';
+    note = `<text x="${PAD.l}" y="${PAD.t - 14}" font-size="11" font-weight="700" fill="${t.ink2}">`
+      + `${esc(sign + trend.perDecade + ' ' + (unit || ''))} per decade`
+      + `<tspan font-weight="400" fill="${t.muted}">  ·  r² ${trend.r2 == null ? '—' : trend.r2.toFixed(2)}`
+      + `${trend.r2 != null && trend.r2 < 0.15 ? ' — scattered, treat as weak' : ''}</tspan></text>`;
+  }
+
+  /* Year ticks: first, last and a couple between, never all of them. */
+  let ticks = '';
+  const every = Math.max(1, Math.round(years.length / 6));
+  years.forEach((y, i) => {
+    if (i % every && i !== years.length - 1) return;
+    ticks += `<text x="${xOf(i).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9.5" fill="${t.muted}">${y}</text>`;
+  });
+
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.innerHTML = gridLayer(PAD.l, W - PAD.r, yOf, scale, dec >= 2 ? 1 : dec, W, H)
+    + note + dots + fit + ticks + hover;
+  wireMarks(svg, null);
+}
+
+/* -----------------------------------------------------------------------------
    sparkLine — a small trend mark for KPI cards.
    --------------------------------------------------------------------------- */
 function sparkLine(values, color, w = 88, h = 26) {
@@ -518,5 +586,6 @@ function wireMarks(svg, onClick) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { niceTicks, fmtVal, barChart, rangeChart, multiLine, stackedBar,
-                     daylightRibbon, sparkLine, hourlyChart, SKY_RAMP, TEMP_POLES, THEME };
+                     daylightRibbon, trendChart, sparkLine, hourlyChart,
+                     SKY_RAMP, TEMP_POLES, THEME };
 }

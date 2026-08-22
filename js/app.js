@@ -13,6 +13,7 @@ const ALL = 'all';                 // the three-up overview, not a location
 
 const S = {
   locId:     ALL,
+  openAlert: null,
   period:    DEFAULT_PERIOD,
   group:     'all',
   month:     -1,                 // focus month, -1 = none
@@ -202,14 +203,19 @@ function selectMonth(m) {
 async function loadAllLive(force) {
   const jobs = LOCATIONS.map(async (l, i) => {
     try {
-      const [wx, air, marine] = await Promise.all([
+      const [wx, air, marine, alerts] = await Promise.all([
         fetchLive(l),
         fetchAir(l).catch(() => null),
-        fetchMarineLive(l).catch(() => null)
+        fetchMarineLive(l).catch(() => null),
+        fetchAlerts(l).catch(() => null)
       ]);
-      S.live[l.id] = { wx, air, marine, at: Date.now(), error: null };
+      S.live[l.id] = { wx, air, marine, alerts, at: Date.now(), error: null };
     } catch (err) {
-      S.live[l.id] = { wx: null, air: null, marine: null, at: Date.now(), error: String(err && err.message || err) };
+      /* Alerts are worth having even when the forecast fails — a hurricane
+         warning does not stop mattering because a temperature did not load. */
+      const alerts = await fetchAlerts(l).catch(() => null);
+      S.live[l.id] = { wx: null, air: null, marine: null, alerts, at: Date.now(),
+                       error: String(err && err.message || err) };
     }
     boot(null, 10 + ((i + 1) / LOCATIONS.length) * 45, `${l.name} done`);
   });
@@ -232,6 +238,7 @@ function renderLive() {
     if (t) t.textContent = c && typeof c.temperature_2m === 'number' ? `${Math.round(c.temperature_2m)}°` : '—';
   });
 
+  renderAlerts();
   if (isAll()) { renderOverview(host); return; }
 
   if (!d || d.error || !d.wx) {
@@ -337,6 +344,158 @@ function renderLive() {
 
   renderForecast(host, l, d);
   renderHourly(host, l, d);
+}
+
+/* ---------------------------------------------------------------------------
+   Severe weather alerts.
+
+   Rendered above everything else, for every home at once regardless of which
+   tab is open — a hurricane watch on the Carolina house is not less urgent
+   because you happen to be looking at New Jersey.
+   ------------------------------------------------------------------------- */
+const SEVERITY_STYLE = {
+  Extreme:  { cls: 'err',  icon: '🚨', rank: 0 },
+  Severe:   { cls: 'err',  icon: '⚠️', rank: 1 },
+  Moderate: { cls: 'warn', icon: '⚠️', rank: 2 },
+  Minor:    { cls: 'warn', icon: 'ℹ️', rank: 3 },
+  Unknown:  { cls: 'info', icon: 'ℹ️', rank: 4 }
+};
+
+function allAlerts() {
+  const out = [];
+  for (const l of LOCATIONS) {
+    const d = S.live[l.id];
+    for (const a of (d && d.alerts) || []) out.push({ ...a, loc: l });
+  }
+  return out.sort((a, b) =>
+    (SEVERITY_STYLE[a.severity] || SEVERITY_STYLE.Unknown).rank -
+    (SEVERITY_STYLE[b.severity] || SEVERITY_STYLE.Unknown).rank);
+}
+
+function renderAlerts() {
+  const host = $('alertHost');
+  if (!host) return;
+  const showing = isAll() ? allAlerts() : allAlerts().filter(a => a.loc.id === S.locId);
+  const others = isAll() ? [] : allAlerts().filter(a => a.loc.id !== S.locId);
+
+  if (!showing.length && !others.length) { host.innerHTML = ''; return; }
+
+  const card = a => {
+    const st = SEVERITY_STYLE[a.severity] || SEVERITY_STYLE.Unknown;
+    const when = a.expires ? `until ${new Date(a.expires).toLocaleString(undefined,
+      { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
+    const open = S.openAlert === a.id;
+    return `<div class="banner ${st.cls} alert-card" data-id="${esc(a.id || '')}">
+      <span class="bico">${st.icon}</span>
+      <div style="flex:1;min-width:0">
+        <b>${esc(a.event)} — ${esc(a.loc.short)}, ${a.loc.state}</b>
+        <div style="font-size:.78rem">${esc(a.headline || '')}</div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:3px">
+          ${esc(a.severity)}${a.urgency ? ' · ' + esc(a.urgency) : ''}${when ? ' · ' + esc(when) : ''}
+          ${a.sender ? ' · ' + esc(a.sender) : ''}</div>
+        ${open ? `<div class="alert-body">${esc(a.description || '').replace(/\n\n/g, '<br><br>').replace(/\n/g, ' ')}
+          ${a.instruction ? `<div style="margin-top:8px"><b>What to do:</b> ${esc(a.instruction).replace(/\n/g, ' ')}</div>` : ''}</div>` : ''}
+        <button class="btn alert-toggle" style="margin-top:7px;font-size:.72rem;padding:4px 9px">
+          ${open ? '▲ Less' : '▼ Full text'}</button>
+      </div></div>`;
+  };
+
+  host.innerHTML = showing.map(card).join('')
+    + (others.length ? `<div class="banner info"><span class="bico">📍</span><div>
+        <b>${others.length} active alert${others.length === 1 ? '' : 's'} at your other home${others.length === 1 ? '' : 's'}</b>
+        — ${esc([...new Set(others.map(o => o.loc.short))].join(', '))}.
+        <button class="btn" id="btnAllAlerts" style="margin-left:8px;font-size:.72rem;padding:4px 9px">See all</button>
+        </div></div>` : '');
+
+  host.querySelectorAll('.alert-card').forEach(el2 => {
+    el2.querySelector('.alert-toggle').addEventListener('click', () => {
+      S.openAlert = S.openAlert === el2.dataset.id ? null : el2.dataset.id;
+      renderAlerts();
+    });
+  });
+  const b = $('btnAllAlerts');
+  if (b) b.addEventListener('click', () => selectLocation(ALL));
+}
+
+/* ---------------------------------------------------------------------------
+   Week ahead — which home is nicest over the next seven days.
+
+   Scores each forecast day with the same beach and pleasant-day definitions
+   the climate section uses, so the live ranking and the historical charts are
+   answering with one vocabulary rather than two.
+   ------------------------------------------------------------------------- */
+function weekScore(l) {
+  const d = S.live[l.id];
+  if (!d || !d.wx || !d.wx.daily) return null;
+  const dd = d.wx.daily, times = dd.time || [];
+  const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: l.tz });
+  let start = times.indexOf(todayISO); if (start < 0) start = 0;
+
+  let beach = 0, pleasant = 0, wet = 0, n = 0, sumHi = 0, sumRain = 0;
+  const days = [];
+  for (let i = start; i < times.length && n < 7; i++, n++) {
+    const hi = dd.temperature_2m_max?.[i], lo = dd.temperature_2m_min?.[i];
+    const rain = dd.precipitation_sum?.[i] ?? 0;
+    const sun = dd.sunshine_duration?.[i], daylight = dd.daylight_duration?.[i];
+    const sunRatio = (sun != null && daylight) ? sun / daylight : null;
+    const isBeach = hi >= 75 && hi <= 95 && rain < 0.04 && (sunRatio == null || sunRatio >= 0.5);
+    const isPleasant = hi >= 65 && hi <= 85 && lo >= 45 && rain < 0.04;
+    if (isBeach) beach++;
+    if (isPleasant) pleasant++;
+    if (rain >= 0.04) wet++;
+    if (typeof hi === 'number') sumHi += hi;
+    sumRain += rain;
+    days.push({ date: times[i], hi, lo, rain, isBeach, isPleasant, code: dd.weather_code?.[i] });
+  }
+  if (!n) return null;
+  return {
+    loc: l, days, n, beach, pleasant, wet,
+    avgHigh: sumHi / n, totalRain: sumRain,
+    /* Beach days count double: they are the scarcer, more decisive outcome. */
+    score: beach * 2 + pleasant - wet * 0.5
+  };
+}
+
+function renderWeekAhead(host) {
+  const scores = LOCATIONS.map(weekScore).filter(Boolean);
+  if (scores.length < 2) return;
+  const ranked = [...scores].sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+
+  const p = el('section', 'panel');
+  p.innerHTML = `
+    <div class="panel-h"><h2>🏆 Best week ahead</h2>
+      <span class="note">Next 7 days, scored on beach-quality and pleasant days</span></div>
+    <div class="panel-b">
+      <div class="banner info" style="margin-bottom:14px"><span class="bico">${best.loc.emoji}</span><div>
+        <b>${esc(best.loc.name)} looks like the place to be.</b>
+        ${best.beach} beach-quality day${best.beach === 1 ? '' : 's'} and
+        ${best.pleasant} pleasant day${best.pleasant === 1 ? '' : 's'} in the next week,
+        averaging ${fmtNum(best.avgHigh, 0)}°F.</div></div>
+      <div class="tscroll"><table>
+        <thead><tr><th>Home</th><th>Beach days</th><th>Pleasant days</th><th>Wet days</th>
+          <th>Avg high</th><th>Total rain</th><th>Week</th></tr></thead>
+        <tbody>${ranked.map((r, i) => `<tr data-l="${r.loc.id}">
+          <td><span class="rank">${i + 1}</span> ${r.loc.emoji} ${esc(r.loc.short)}, ${r.loc.state}</td>
+          <td${r.beach ? ' class="hi"' : ''}>${r.beach}</td>
+          <td${r.pleasant ? ' class="lo"' : ''}>${r.pleasant}</td>
+          <td>${r.wet}</td>
+          <td>${fmtNum(r.avgHigh, 0)}°F</td>
+          <td>${fmtNum(r.totalRain, 2)} in</td>
+          <td><span class="wk">${r.days.map(d =>
+            `<i class="wk-d ${d.isBeach ? 'wk-beach' : d.isPleasant ? 'wk-ok' : d.rain >= 0.04 ? 'wk-wet' : ''}"
+              title="${esc(new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long' }))}: ${fmtNum(d.hi, 0)}°F, ${fmtNum(d.rain, 2)} in"></i>`).join('')}</span></td>
+        </tr>`).join('')}</tbody></table></div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:10px">
+        Beach day: high 75–95°F, under 0.04 in of rain, sunshine over half the daylight.
+        Pleasant day: high 65–85°F, low at least 45°F, dry.
+        <span class="wk" style="margin-left:8px"><i class="wk-d wk-beach"></i> beach
+        <i class="wk-d wk-ok"></i> pleasant <i class="wk-d wk-wet"></i> wet <i class="wk-d"></i> neither</span>
+      </div>
+    </div>`;
+  host.appendChild(p);
+  p.querySelectorAll('tbody tr').forEach(tr =>
+    tr.addEventListener('click', () => selectLocation(tr.dataset.l)));
 }
 
 /* ---------------------------------------------------------------------------
@@ -479,6 +638,7 @@ function renderOverview(host) {
     grid.appendChild(card);
   });
   host.appendChild(grid);
+  renderWeekAhead(host);
 }
 
 /* --- 7-day forecast ------------------------------------------------------ */
@@ -674,7 +834,10 @@ async function loadClimate(locId, period, force) {
 
     const payload = {
       rows, annual: annualSummary(rows),
+      frost: frostStats(arch.daily),
+      years: yearlySeries(arch.daily),
       meta: { period, locId, extended: arch.extended, sst: sstInfo, built: Date.now(),
+              model: arch.model, modelNote: arch.modelNote,
               elevation: arch.meta && arch.meta.elevation }
     };
     S.clim[key] = payload; S.climState[key] = 'ready';
@@ -755,7 +918,7 @@ function renderClimate() {
     return;
   }
 
-  box.innerHTML = climateNotes(c);
+  box.innerHTML = climateNotes(c) + frostPanel(c);
   renderKPIs(); renderDetail(); renderCharts(); renderTable();
 }
 
@@ -798,6 +961,32 @@ function climateNotes(c) {
     ${esc(c.meta.sst.error || '')} The ocean charts are hidden; the live water
     temperature above is fetched separately and may still be working.</div></div>`);
   return bits.join('');
+}
+
+/* Frost dates and growing season — the numbers a garden runs on. */
+function frostPanel(c) {
+  const f = c.frost;
+  if (!f) return '';
+  const l = loc();
+  if (!f.everFreezes) return `<div class="banner info"><span class="bico">🌱</span><div>
+    <b>${esc(l.name)} did not record a single freeze in ${f.yearsAnalysed} years.</b>
+    The growing season is the whole year — there is no last-frost date to plan around.</div></div>`;
+
+  const bits = [
+    ['Last spring freeze', doyToLabel(f.lastSpringFreezeDoy), 'average of the final 32°F night'],
+    ['First fall freeze',  doyToLabel(f.firstFallFreezeDoy),  'average of the first 32°F night'],
+    ['Growing season',     `${f.growingSeasonDays} days`,     'between those two dates'],
+    ['Plant after',        doyToLabel(f.latestSpringFreezeDoy), '9 years in 10 are frost-free by now'],
+    ['Shortest season',    `${f.shortestSeasonDays} days`,    `in ${f.yearsAnalysed} years of record`],
+    ['Longest season',     `${f.longestSeasonDays} days`,     `in ${f.yearsAnalysed} years of record`]
+  ].filter(b => b[1] != null && !String(b[1]).includes('null'));
+
+  return `<section class="panel"><div class="panel-h">
+      <h2>🌱 Frost dates &amp; growing season</h2>
+      <span class="note">${esc(l.name)} · ${f.yearsAnalysed} years${f.freezeFreeYears ? ` · ${f.freezeFreeYears} with no freeze at all` : ''}</span>
+    </div><div class="panel-b"><div class="stat-grid">${bits.map(([a, b, cc]) =>
+      `<div class="stat"><div class="stat-l">${esc(a)}</div><div class="stat-v">${esc(String(b))}</div>
+       <div class="stat-s">${esc(cc)}</div></div>`).join('')}</div></div></section>`;
 }
 
 /* --- KPI cards ----------------------------------------------------------- */
@@ -1037,6 +1226,43 @@ function renderCharts() {
     'How much water a well-watered lawn loses per month — irrigation demand.',
     svg => barChart(svg, { values: vals('et0'), labels: MONTHS, color: isDark() ? '#199e70' : '#1baf7a', unit: 'in', dec: 2, selected: sel, onClick })]);
 
+  /* Wind and storms */
+  defs.push(['wind', false, 'Breezy days',
+    'Days gusting to 25 mph or more.',
+    svg => barChart(svg, { values: vals('breezyDays'), labels: MONTHS, color: isDark() ? '#199e70' : '#1baf7a', unit: 'days', dec: 1, selected: sel, onClick })]);
+  defs.push(['wind', false, 'Gale-force days',
+    `Days gusting to 39 mph — tropical-storm force. ${l.marine.proxy ? '' : 'The Atlantic hurricane season runs 1 June to 30 November, which is the hump you are looking at.'}`,
+    svg => barChart(svg, { values: vals('strongWindDays'), labels: MONTHS, color: isDark() ? '#d95926' : '#eb6834', unit: 'days', dec: 1, selected: sel, onClick })]);
+  if (rows.some(r => (r.severeWindDays || 0) > 0.01))
+    defs.push(['wind', false, 'Damaging wind days',
+      'Days gusting to 58 mph — the severe-thunderstorm threshold. These are rare, so the scale is small by design.',
+      svg => barChart(svg, { values: vals('severeWindDays'), labels: MONTHS, color: isDark() ? '#e66767' : '#e34948', unit: 'days', dec: 2, selected: sel, onClick })]);
+
+  /* Year-by-year trends */
+  const yrs = c.years || [];
+  if (yrs.length >= 5) {
+    const years = yrs.map(r => r.year);
+    const TRENDS = [
+      ['meanTemp',  'Average temperature',   '°F',   1, isDark() ? '#e66767' : '#e34948', 'Mean of every day in the year.'],
+      ['meanHigh',  'Average daily high',    '°F',   1, isDark() ? '#d95926' : '#eb6834', 'Mean of the daily maximum.'],
+      ['meanLow',   'Average daily low',     '°F',   1, isDark() ? '#3987e5' : '#2a78d6', 'Mean of the daily minimum — often where warming shows first.'],
+      ['precip',    'Annual precipitation',  'in',   1, isDark() ? '#3987e5' : '#2a78d6', 'Total for the year.'],
+      ['hot90',     'Days at or above 90°F', 'days', 0, isDark() ? '#e66767' : '#e34948', 'Count per year.'],
+      ['freeze32',  'Days at or below 32°F', 'days', 0, isDark() ? '#3987e5' : '#2a78d6', 'Count per year.'],
+      ['sunnyDays', 'Sunny days',            'days', 0, isDark() ? '#fbbf24' : '#eda100', 'Count per year.']
+    ];
+    if (yrs.some(r => r.snow > 0.5))
+      TRENDS.push(['snow', 'Annual snowfall', 'in', 1, isDark() ? '#c3c2b7' : '#52514e', 'Total for the year.']);
+
+    for (const [key, title, unit, dec, color, desc] of TRENDS) {
+      const series = yrs.map(r => r[key]);
+      const tr = trendPerDecade(yrs, key);
+      defs.push(['trend', false, title,
+        `${desc} The line is a least-squares fit; r² says how tightly the years actually follow it. ${yrs.length} years — too short to call a climate trend on its own, but it is what this record shows.`,
+        svg => trendChart(svg, { years, values: series, trend: tr, color, unit, dec, label: title })]);
+    }
+  }
+
   const shown = defs.filter(d => S.group === 'all' || d[0] === S.group);
   host.innerHTML = shown.map((d, i) =>
     `<div class="chart${d[1] ? ' wide' : ''}">
@@ -1266,7 +1492,12 @@ function renderDiagnostics() {
   const okCount = DIAG.filter(d => d.status === 'ok').length, failCount = DIAG.filter(d => d.status === 'fail').length;
   $('sourceNotes').innerHTML = `
     <div><b>Live conditions, 7-day forecast and hourly detail</b> — Open-Meteo Forecast API, refreshed on every page load.</div>
-    <div><b>Monthly normals</b> — Open-Meteo Historical Weather API (ECMWF ERA5 reanalysis), ${PERIODS[S.period].years} years of daily records aggregated in your browser.</div>
+    <div><b>Monthly normals</b> — Open-Meteo Historical Weather API (ECMWF <b>ERA5</b> reanalysis family),
+      ${PERIODS[S.period].years} years of daily records${c && c.meta && c.meta.model ? `, model <code>${esc(c.meta.model)}</code>` : ''}.
+      ERA5-Land runs on a ~9 km grid and ERA5 on ~28 km; the finer one is requested first because a coastal
+      cell on the coarse grid mixes land and sea and reads a few degrees cool in summer.
+      ${c && c.meta && c.meta.modelNote && c.meta.modelNote !== c.meta.model ? `<br><span style="color:var(--muted)">${esc(c.meta.modelNote)}</span>` : ''}</div>
+    <div><b>Severe weather alerts</b> — US National Weather Service (api.weather.gov), active watches and warnings for each home's exact coordinates.</div>
     <div><b>Ocean temperature and waves</b> — Open-Meteo Marine API at ${esc(l.marine.label)}${c && c.meta && c.meta.sst && c.meta.sst.years ? ` · ${c.meta.sst.years} years retrieved` : ''}.</div>
     <div><b>Air quality</b> — Open-Meteo Air Quality API (CAMS), US AQI scale.</div>
     <div><b>Sunrise, sunset, solar noon and daylight</b> — computed locally from the NOAA solar equations, then converted to local clock time with your browser's IANA time-zone database, so daylight saving is handled exactly.</div>

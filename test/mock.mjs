@@ -218,6 +218,26 @@ export function marineResponse(url) {
   return out;
 }
 
+/* NWS active-alerts payload, shaped like api.weather.gov's GeoJSON. */
+export function alertsResponse(url, alerts = null) {
+  const u = new URL(url);
+  const lat = parseFloat((u.searchParams.get('point') || '0,0').split(',')[0]);
+  /* Only the Carolina home gets an alert by default, so the tests can check
+     that other homes' alerts surface as a cross-home notice. */
+  const list = alerts !== null ? alerts
+    : (lat > 33 && lat < 35 ? [{
+        event: 'Hurricane Watch', severity: 'Severe', urgency: 'Expected', certainty: 'Possible',
+        headline: 'Hurricane Watch issued for coastal Horry County',
+        description: 'A Hurricane Watch means hurricane conditions are possible within 48 hours.\n\nPrepare now.',
+        instruction: 'Secure loose objects and review your evacuation plan.',
+        onset: new Date().toISOString(),
+        expires: new Date(Date.now() + 36e5 * 30).toISOString(),
+        senderName: 'NWS Wilmington NC'
+      }] : []);
+  return { type: 'FeatureCollection',
+    features: list.map((p, i) => ({ id: `urn:oid:test.${i}`, type: 'Feature', properties: p })) };
+}
+
 export function airResponse(url) {
   const u = new URL(url);
   return {

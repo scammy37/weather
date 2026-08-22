@@ -194,16 +194,25 @@ for (const loc of homes) {
       out.homes[loc.id][period] = {
         rows,
         annual: climate.annualSummary(rows),
+        frost: climate.frostStats(arch.daily),
+        years: climate.yearlySeries(arch.daily),
         meta: {
           period, locId: loc.id,
           extended: arch.extended,
+          model: arch.model, modelNote: arch.modelNote,
           sst: sstInfo,
           built: Date.now(),
           elevation: arch.meta && arch.meta.elevation
         }
       };
+      const set = out.homes[loc.id][period];
       const days = rows.reduce((s, r) => s + r.sampleDays, 0);
-      log(`  ok — ${days.toLocaleString()} days aggregated, extended vars: ${arch.extended}`);
+      log(`  ok — ${days.toLocaleString()} days, model ${arch.model}, extended ${arch.extended}, ${set.years.length} yearly rows`);
+      /* Print the numbers most likely to expose a grid-resolution problem, so
+         a bad model shows up in the run log rather than only on the page. */
+      log(`     July high ${rows[6].avgHigh.toFixed(1)}°F · days ≥90°F/yr ${Math.round(set.annual.annualHot90)}`
+        + ` · Jan low ${rows[0].avgLow.toFixed(1)}°F · annual precip ${set.annual.annualPrecip.toFixed(1)} in`);
+      if (arch.modelNote && arch.modelNote !== arch.model) log(`     note: ${arch.modelNote}`);
     } catch (err) {
       failures++;
       log(`  FAILED: ${String(err && err.message || err)}`);

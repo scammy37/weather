@@ -34,6 +34,13 @@ const TH = {
   baseHDD: 65, baseCDD: 65, baseGDD: 50
 };
 
+/* Wind thresholds. Tropical-storm force is 39 mph, hurricane force 74; the
+   Atlantic season runs 1 Jun – 30 Nov. Counting days that reach those gust
+   speeds is honest reporting of what the reanalysis actually saw — it is not
+   a storm-track record, and the dashboard says so. */
+const WIND = { breezy: 25, strong: 39, severe: 58, hurricane: 74 };
+const ATLANTIC_SEASON = [5, 6, 7, 8, 9, 10];        // Jun–Nov, zero-indexed
+
 const MJ_TO_KWH = 1 / 3.6;
 const HPA_TO_INHG = 0.02953;
 
@@ -95,6 +102,7 @@ function aggregateMonthly(daily, sunClim) {
     let precipSum = 0, rainSum = 0, snowSum = 0, hrsSum = 0, et0Sum = 0;
     let wet = 0, heavy = 0, snowD = 0, sunny = 0, partly = 0, cloudy = 0;
     let hot = 0, veryHot = 0, freeze = 0, hard = 0, beach = 0, pleasant = 0;
+    let breezy = 0, strongWind = 0, severeWind = 0;
     let hdd = 0, cdd = 0, gdd = 0;
     let nPrecip = 0, nSun = 0, nTemp = 0;
 
@@ -114,6 +122,13 @@ function aggregateMonthly(daily, sunClim) {
         if (ratio >= TH.sunnyRatio) sunny++;
         else if (ratio >= TH.partlyRatio) partly++;
         else cloudy++;
+      }
+
+      const g = windGust[i];
+      if (isNum(g)) {
+        if (g >= WIND.breezy) breezy++;
+        if (g >= WIND.strong) strongWind++;
+        if (g >= WIND.severe) severeWind++;
       }
 
       const hi = tmax[i], lo = tmin[i], mn = tmean(i);
@@ -148,6 +163,7 @@ function aggregateMonthly(daily, sunClim) {
       cloudyDays: nSun ? cloudy * days / nSun : null,
       hot90: hot, hot95: veryHot, freeze32: freeze, freeze20: hard,
       beachDays: beach, pleasantDays: pleasant,
+      breezyDays: breezy, strongWindDays: strongWind, severeWindDays: severeWind,
       hdd: nTemp ? hdd : null, cdd: nTemp ? cdd : null, gdd: nTemp ? gdd : null
     });
   }
@@ -155,6 +171,7 @@ function aggregateMonthly(daily, sunClim) {
   const TOTAL_KEYS = ['precipTotal','rainfall','snowfall','precipHours','et0','wetDays',
                       'heavyRainDays','dryDays','snowDays','sunnyDays','partlyDays','cloudyDays',
                       'hot90','hot95','freeze32','freeze20','beachDays','pleasantDays',
+                      'breezyDays','strongWindDays','severeWindDays',
                       'hdd','cdd','gdd'];
 
   /* --- pass 3: assemble the 12 rows --------------------------------------- */
@@ -220,6 +237,157 @@ function aggregateMonthly(daily, sunClim) {
     rows.push(row);
   }
   return rows;
+}
+
+/* -----------------------------------------------------------------------------
+   Frost dates and the growing season.
+
+   For each year: the last spring freeze (latest low ≤ 32°F before 1 July) and
+   the first fall freeze (earliest one after). The gap between them is the
+   growing season. Years with no freeze at all — every year in Bonita Springs —
+   are counted separately rather than folded in as zeros, which would invent a
+   frost that never happened.
+   --------------------------------------------------------------------------- */
+function frostStats(daily, threshold = 32) {
+  const t = (daily && daily.time) || [], tmin = (daily && daily.temperature_2m_min) || [];
+  if (!t.length) return null;
+
+  const years = new Map();      // year → { lastSpring, firstFall, freezeDays }
+  for (let i = 0; i < t.length; i++) {
+    const s = t[i];
+    if (typeof s !== 'string') continue;
+    const y = +s.slice(0, 4);
+    const doy = dayOfYear(s);
+    const v = tmin[i];
+    if (!isNum(v)) continue;
+    let rec = years.get(y);
+    if (!rec) years.set(y, rec = { lastSpring: null, firstFall: null, freezeDays: 0, days: 0 });
+    rec.days++;
+    if (v <= threshold) {
+      rec.freezeDays++;
+      if (doy < 183) rec.lastSpring = Math.max(rec.lastSpring ?? 0, doy);
+      else if (rec.firstFall === null) rec.firstFall = doy;
+    }
+  }
+
+  const spring = [], fall = [], season = [];
+  let freezeFreeYears = 0, total = 0;
+  for (const [, r] of years) {
+    if (r.days < 300) continue;                    // ignore truncated years
+    total++;
+    if (!r.freezeDays) { freezeFreeYears++; continue; }
+    if (r.lastSpring != null) spring.push(r.lastSpring);
+    if (r.firstFall != null) fall.push(r.firstFall);
+    if (r.lastSpring != null && r.firstFall != null) season.push(r.firstFall - r.lastSpring);
+  }
+  if (!total) return null;
+
+  const avg = a => a.length ? Math.round(mean(a)) : null;
+  const pct = a => a.length ? Math.round(a.slice().sort((x, y2) => x - y2)[Math.floor(a.length * 0.9)]) : null;
+  return {
+    threshold,
+    yearsAnalysed: total,
+    freezeFreeYears,
+    everFreezes: freezeFreeYears < total,
+    lastSpringFreezeDoy: avg(spring),
+    firstFallFreezeDoy:  avg(fall),
+    growingSeasonDays:   avg(season),
+    latestSpringFreezeDoy: pct(spring),
+    shortestSeasonDays: season.length ? Math.min(...season) : null,
+    longestSeasonDays:  season.length ? Math.max(...season) : null
+  };
+}
+
+/* Day-of-year (1–366) from an ISO date string. */
+function dayOfYear(iso) {
+  const y = +iso.slice(0, 4), m = +iso.slice(5, 7), d = +iso.slice(8, 10);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(y, 0, 1)) / 86400000) + 1;
+}
+
+/* "April 18" from a day-of-year, using a non-leap reference year. */
+function doyToLabel(doy) {
+  if (doy == null) return null;
+  const d = new Date(Date.UTC(2025, 0, 1) + (doy - 1) * 86400000);
+  return `${MONTHS_FULL[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/* -----------------------------------------------------------------------------
+   Per-year series — the raw material for the trend charts.
+
+   The monthly normals answer "what is a typical July"; these answer "is July
+   changing". Kept deliberately small (one number per year per measure) so the
+   committed snapshot stays a few hundred KB.
+   --------------------------------------------------------------------------- */
+function yearlySeries(daily) {
+  const t = (daily && daily.time) || [];
+  if (!t.length) return null;
+  const g = k => daily[k] || [];
+  const tmax = g('temperature_2m_max'), tmin = g('temperature_2m_min');
+  const tmean0 = g('temperature_2m_mean'), precip = g('precipitation_sum');
+  const snow = g('snowfall_sum'), sunshine = g('sunshine_duration'), daylight = g('daylight_duration');
+
+  const byYear = new Map();
+  for (let i = 0; i < t.length; i++) {
+    const s = t[i];
+    if (typeof s !== 'string') continue;
+    const y = +s.slice(0, 4);
+    let r = byYear.get(y);
+    if (!r) byYear.set(y, r = { year: y, days: 0, tSum: 0, tN: 0, hiSum: 0, hiN: 0,
+                                loSum: 0, loN: 0, precip: 0, snow: 0,
+                                hot90: 0, freeze32: 0, sunny: 0, sunN: 0 });
+    r.days++;
+    const mn = isNum(tmean0[i]) ? tmean0[i]
+             : (isNum(tmax[i]) && isNum(tmin[i]) ? (tmax[i] + tmin[i]) / 2 : null);
+    if (isNum(mn)) { r.tSum += mn; r.tN++; }
+    if (isNum(tmax[i])) { r.hiSum += tmax[i]; r.hiN++; if (tmax[i] >= TH.hot) r.hot90++; }
+    if (isNum(tmin[i])) { r.loSum += tmin[i]; r.loN++; if (tmin[i] <= TH.freeze) r.freeze32++; }
+    if (isNum(precip[i])) r.precip += precip[i];
+    if (isNum(snow[i])) r.snow += snow[i];
+    if (isNum(daylight[i]) && daylight[i] > 0 && isNum(sunshine[i])) {
+      r.sunN++;
+      if (sunshine[i] / daylight[i] >= TH.sunnyRatio) r.sunny++;
+    }
+  }
+
+  return [...byYear.values()]
+    .filter(r => r.days >= 300)                    // whole years only
+    .sort((a, b) => a.year - b.year)
+    .map(r => ({
+      year: r.year,
+      meanTemp: r.tN ? +(r.tSum / r.tN).toFixed(2) : null,
+      meanHigh: r.hiN ? +(r.hiSum / r.hiN).toFixed(2) : null,
+      meanLow:  r.loN ? +(r.loSum / r.loN).toFixed(2) : null,
+      precip:   +r.precip.toFixed(2),
+      snow:     +r.snow.toFixed(2),
+      hot90:    r.hot90,
+      freeze32: r.freeze32,
+      sunnyDays: r.sunN ? Math.round(r.sunny * r.days / r.sunN) : null
+    }));
+}
+
+/* Least-squares slope of a year series, expressed per decade — the number the
+   trend chart actually reports. */
+function trendPerDecade(series, key) {
+  const pts = (series || []).filter(r => isNum(r[key])).map(r => [r.year, r[key]]);
+  if (pts.length < 5) return null;
+  const n = pts.length;
+  const mx = pts.reduce((s, p) => s + p[0], 0) / n;
+  const my = pts.reduce((s, p) => s + p[1], 0) / n;
+  let num = 0, den = 0;
+  for (const [x, y] of pts) { num += (x - mx) * (y - my); den += (x - mx) ** 2; }
+  if (!den) return null;
+  const slope = num / den;
+  /* r², so the chart can say how much of the scatter the line actually explains. */
+  let ssTot = 0, ssRes = 0;
+  for (const [x, y] of pts) {
+    const fit = my + slope * (x - mx);
+    ssTot += (y - my) ** 2; ssRes += (y - fit) ** 2;
+  }
+  return {
+    perDecade: +(slope * 10).toFixed(2),
+    r2: ssTot ? +(1 - ssRes / ssTot).toFixed(3) : null,
+    first: pts[0][0], last: pts[pts.length - 1][0], n
+  };
 }
 
 /* -----------------------------------------------------------------------------
@@ -293,5 +461,7 @@ function annualSummary(rows) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { aggregateMonthly, mergeSST, annualSummary, TH, MIN_DAYS_FOR_MONTH };
+  module.exports = { aggregateMonthly, mergeSST, annualSummary, frostStats, yearlySeries,
+                     trendPerDecade, dayOfYear, doyToLabel, TH, WIND, ATLANTIC_SEASON,
+                     MIN_DAYS_FOR_MONTH };
 }

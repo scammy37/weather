@@ -162,5 +162,66 @@ ok('handles a single day without throwing', Array.isArray(sparse) && sparse.leng
 ok('missing series yield null, not NaN', sparse[0].humidity === null, `${sparse[0].humidity}`);
 ok('empty input returns null', aggregateMonthly({ time: [] }, sunClim) === null);
 
+console.log('\n\x1b[1mfrostStats\x1b[0m');
+const { frostStats, yearlySeries, trendPerDecade, doyToLabel, dayOfYear } = require('../js/climate.js');
+
+/* A climate that freezes reliably: lows below 32 up to 20 March and again from
+   10 November, every year. */
+function frostSynth(years, springDoy, fallDoy) {
+  const d = { time: [], temperature_2m_min: [], temperature_2m_max: [],
+              temperature_2m_mean: [], precipitation_sum: [], snowfall_sum: [],
+              sunshine_duration: [], daylight_duration: [] };
+  for (const y of years) for (let doy = 1; doy <= 365; doy++) {
+    const dt = new Date(Date.UTC(y, 0, 1) + (doy - 1) * 86400000);
+    d.time.push(dt.toISOString().slice(0, 10));
+    const freezing = springDoy != null && (doy <= springDoy || doy >= fallDoy);
+    d.temperature_2m_min.push(freezing ? 25 : 50);
+    d.temperature_2m_max.push(freezing ? 40 : 80);
+    d.temperature_2m_mean.push(freezing ? 32 : 65);
+    d.precipitation_sum.push(0.1);
+    d.snowfall_sum.push(freezing ? 0.5 : 0);
+    d.daylight_duration.push(36000);
+    d.sunshine_duration.push(30000);
+  }
+  return d;
+}
+
+const fs1 = frostStats(frostSynth([2020, 2021, 2022], 79, 314));
+eq('last spring freeze is day 79', fs1.lastSpringFreezeDoy, 79);
+eq('first fall freeze is day 314', fs1.firstFallFreezeDoy, 314);
+eq('growing season is the gap', fs1.growingSeasonDays, 314 - 79);
+ok('reports that it does freeze', fs1.everFreezes === true);
+eq('three whole years analysed', fs1.yearsAnalysed, 3);
+eq('no freeze-free years', fs1.freezeFreeYears, 0);
+ok('day 79 renders as a date', doyToLabel(79) === 'March 20', doyToLabel(79));
+eq('dayOfYear of Jan 1', dayOfYear('2021-01-01'), 1);
+eq('dayOfYear of Dec 31 (non-leap)', dayOfYear('2021-12-31'), 365);
+
+/* A climate that never freezes — Bonita Springs. Must not report a frost date. */
+const fs2 = frostStats(frostSynth([2020, 2021, 2022], null, null));
+ok('a frost-free climate reports no freeze', fs2.everFreezes === false);
+eq('every year counted as freeze-free', fs2.freezeFreeYears, 3);
+ok('no invented spring freeze date', fs2.lastSpringFreezeDoy === null);
+ok('no invented growing-season length', fs2.growingSeasonDays === null);
+
+console.log('\n\x1b[1myearlySeries and trendPerDecade\x1b[0m');
+const ys = yearlySeries(frostSynth([2018, 2019, 2020, 2021, 2022], 79, 314));
+eq('one row per whole year', ys.length, 5);
+ok('rows are in year order', ys.every((r, i) => i === 0 || ys[i - 1].year < r.year));
+ok('mean temp populated', typeof ys[0].meanTemp === 'number');
+eq('freeze days match the synthetic pattern', ys[0].freeze32, 79 + (365 - 314 + 1));
+eq('annual precip is the sum', ys[0].precip, +(365 * 0.1).toFixed(2));
+
+/* A deliberately warming series: +0.5°F per year = +5°F per decade. */
+const warming = Array.from({ length: 20 }, (_, i) => ({ year: 2000 + i, meanTemp: 50 + i * 0.5 }));
+const tr = trendPerDecade(warming, 'meanTemp');
+eq('slope reported per decade', tr.perDecade, 5);
+eq('a perfect line has r² of 1', tr.r2, 1);
+eq('spans the whole series', tr.n, 20);
+ok('a flat series trends to zero',
+   trendPerDecade(warming.map(r => ({ ...r, meanTemp: 60 })), 'meanTemp').perDecade === 0);
+ok('too few points returns null',
+   trendPerDecade(warming.slice(0, 3), 'meanTemp') === null);
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

@@ -6,7 +6,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { archiveResponse, forecastResponse, marineResponse, airResponse } from './mock.mjs';
+import { archiveResponse, forecastResponse, marineResponse, airResponse, alertsResponse } from './mock.mjs';
 import { createRequire } from 'module';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,6 +79,7 @@ async function main() {
   /* Hide the committed snapshot from this context: these sections test the
      path taken when no precomputed data is available. Section 19 covers the
      snapshot path with the fixture served explicitly. */
+  await page.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await page.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page.route('**://api.open-meteo.com/**',        r => { calls.forecast++;   json(r, forecastResponse(r.request().url())); });
   await page.route('**://air-quality-api.open-meteo.com/**', r => { calls.air++;   json(r, airResponse(r.request().url())); });
@@ -327,10 +328,13 @@ async function main() {
   const diagRows = (await page.$$('#diagTbl tr')).length;
   ok('diagnostics lists the requests made', diagRows > 5, `${diagRows} rows`);
   ok('diagnostics shows successes', (await page.textContent('#diagTbl')).includes('ok'));
-  ok('source notes explain every feed', (await page.textContent('#sourceNotes')).includes('ERA5'));
+  const notes = await page.textContent('#sourceNotes');
+  for (const feed of ['ERA5', 'Marine API', 'Air Quality', 'National Weather Service', 'NOAA solar'])
+    ok(`source notes name the ${feed} feed`, notes.includes(feed), notes.slice(0, 120));
 
   console.log('\n\x1b[1m16. Failure handling\x1b[0m');
   const page2 = await (await browser.newContext(CTX)).newPage();
+  await page2.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page2.route('**://*.open-meteo.com/**', r => r.abort('failed'));
   await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
@@ -347,9 +351,12 @@ async function main() {
      settled state rather than the first appearance of an error element — the
      panel legitimately cycles through loading while retries are in flight. */
   await page2.click('.tab[data-id="nmb"]');
+  /* Wait for the load to actually settle rather than for text to appear —
+     the panel legitimately shows a spinner while retries are in flight, and
+     racing the render made this assertion flaky. */
   await page2.waitForFunction(
-    () => (document.getElementById('climateStatus').textContent || '').includes('Could not build'),
-    { timeout: 90000 }).catch(() => {});
+    () => Object.values(S.climState).some(v => v === 'error' || v === 'ready'),
+    { timeout: 90000 });
   const climTxt = (await page2.textContent('#climateStatus')).trim();
   ok('normals failure is explained, not silent',
      climTxt.includes('Could not build'), climTxt.slice(0, 200));
@@ -358,6 +365,7 @@ async function main() {
 
   console.log('\n\x1b[1m17. Partial failure — archive up, marine down\x1b[0m');
   const page3 = await (await browser.newContext(CTX)).newPage();
+  await page3.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await page3.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await page3.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await page3.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -375,6 +383,7 @@ async function main() {
 
   console.log('\n\x1b[1m18. Mobile layout\x1b[0m');
   const m = await (await browser.newContext({ ...CTX, viewport: { width: 390, height: 844 } })).newPage();
+  await m.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await m.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await m.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await m.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -396,6 +405,41 @@ async function main() {
   await m.screenshot({ path: path.join(SHOTS, '05-mobile.png'), fullPage: false });
   await m.close();
 
+  console.log('\n\x1b[1m18b. Severe weather alerts\x1b[0m');
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
+  ok('an active alert is surfaced', (await page.$$('#alertHost .alert-card')).length >= 1);
+  const alertTxt = await page.textContent('#alertHost');
+  ok('it names the event and the home', alertTxt.includes('Hurricane Watch') && alertTxt.includes('Myrtle'));
+  ok('severity is stated', alertTxt.includes('Severe'));
+  ok('a severe alert uses the error styling, not a mild one',
+     (await page.$$('#alertHost .banner.err')).length >= 1);
+  await page.click('#alertHost .alert-toggle');
+  await page.waitForSelector('#alertHost .alert-body', { timeout: 5000 });
+  ok('the full NWS text expands', (await page.textContent('#alertHost .alert-body')).includes('hurricane conditions'));
+  ok('and the official instruction is shown',
+     (await page.textContent('#alertHost .alert-body')).includes('evacuation plan'));
+  await page.click('#alertHost .alert-toggle');
+  ok('it collapses again', (await page.$$('#alertHost .alert-body')).length === 0);
+  /* On a home with no alert of its own, the other home's alert must still surface. */
+  await page.click('.tab[data-id="bonita"]');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
+  ok("another home's alert is still flagged",
+     (await page.textContent('#alertHost')).includes('at your other home'));
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
+
+  console.log('\n\x1b[1m18c. Best week ahead\x1b[0m');
+  await page.waitForSelector('.wk', { timeout: 15000 });
+  ok('the week-ahead panel ranks all three homes',
+     (await page.$$eval('.wk', e => e.length)) >= 3);
+  const wkTxt = await page.textContent('#liveHost');
+  ok('it names a winner', wkTxt.includes('looks like the place to be'));
+  ok('it defines what a beach day means', wkTxt.includes('high 75–95°F'));
+  ok('each home shows seven day markers',
+     (await page.$$eval('tbody .wk', rows => rows.every(r => r.querySelectorAll('.wk-d').length === 7))));
+  ok('no NaN in the ranking', !wkTxt.includes('NaN'));
+
   console.log('\n\x1b[1m19. Precomputed snapshot — the page must not hit the archive at all\x1b[0m');
   /* Build a snapshot the same way scripts/build-climate.mjs does, serve it, and
      assert the archive is never touched. This is the whole point of the fix. */
@@ -405,6 +449,7 @@ async function main() {
 
   const snapCtx = await browser.newContext(CTX);
   const sp = await snapCtx.newPage();
+  await sp.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await sp.route('**/data/climate.json', serveSnapshot(fixture));
   let archiveHits = 0, marineArchiveHits = 0;
   await sp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
@@ -435,6 +480,7 @@ async function main() {
   const partial = JSON.parse(JSON.stringify(fixture));
   for (const h of Object.values(partial.homes)) delete h[missingPeriod];
   const sp2 = await snapCtx.newPage();
+  await sp2.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await sp2.route('**/data/climate.json', serveSnapshot(partial));
   let archiveHits2 = 0;
   await sp2.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
@@ -456,6 +502,7 @@ async function main() {
   console.log('\n\x1b[1m20. Rate-limit handling\x1b[0m');
   const rlCtx = await browser.newContext(CTX);
   const rp = await rlCtx.newPage();
+  await rp.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await rp.route('**/data/climate.json', serveSnapshot(partial));
   await rp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await rp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));
@@ -481,9 +528,41 @@ async function main() {
      /^-?\d+°$/.test((await rp.textContent('.now-temp')).trim()));
   await rlCtx.close();
 
+  console.log('\n\x1b[1m20b. Trends, frost dates and wind\x1b[0m');
+  await page.click('.tab[data-id="rockaway"]');
+  await openHome(page, 'rockaway');
+  const frostTxt = await page.textContent('#climateStatus');
+  ok('Rockaway shows frost dates', frostTxt.includes('Frost dates'), frostTxt.slice(0, 80));
+  ok('it gives a last spring freeze', frostTxt.includes('Last spring freeze'));
+  ok('and a growing-season length', frostTxt.includes('Growing season'));
+  await page.selectOption('#selGroup', 'trend');
+  await page.waitForTimeout(200);
+  const trendCharts = (await page.$$('#charts .chart')).length;
+  ok('trend charts render', trendCharts >= 5, `${trendCharts}`);
+  const trendTxt = await page.textContent('#charts');
+  ok('each trend states a per-decade slope', trendTxt.includes('per decade'));
+  ok('and reports r² so a scattered fit is not read as a firm trend', trendTxt.includes('r²'));
+  ok('trend charts draw a fit line',
+     (await page.$$eval('#charts .chart svg line', e => e.length)) > 0);
+  await page.selectOption('#selGroup', 'wind');
+  await page.waitForTimeout(200);
+  ok('wind charts render', (await page.$$('#charts .chart')).length >= 2);
+  ok('gale-force days are explained as tropical-storm force',
+     (await page.textContent('#charts')).includes('tropical-storm force'));
+  await page.selectOption('#selGroup', 'all');
+
+  /* Bonita never freezes — it must say so rather than invent a frost date. */
+  await page.click('.tab[data-id="bonita"]');
+  await openHome(page, 'bonita');
+  const bonitaFrost = await page.textContent('#climateStatus');
+  ok('a frost-free home says so explicitly',
+     bonitaFrost.includes('not record a single freeze') || bonitaFrost.includes('Frost dates'),
+     bonitaFrost.slice(0, 100));
+
   console.log('\n\x1b[1m21. Time zones — a viewer in Denver reading East Coast homes\x1b[0m');
   const tzCtx = await browser.newContext({ ...CTX, timezoneId: 'America/Denver' });
   const tzp = await tzCtx.newPage();
+  await tzp.route('**://api.weather.gov/**', r => json(r, alertsResponse(r.request().url())));
   await tzp.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
   await tzp.route('**://api.open-meteo.com/**',   r => json(r, forecastResponse(r.request().url())));
   await tzp.route('**://air-quality-api.open-meteo.com/**', r => json(r, airResponse(r.request().url())));

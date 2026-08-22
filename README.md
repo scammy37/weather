@@ -21,6 +21,16 @@ strip answers the cross-home questions: warmest and coolest right now, the
 spread between them, whether it is raining anywhere, and which water is warmest.
 Click any card to open that home in full.
 
+**🚨 Severe weather alerts** — active National Weather Service watches and
+warnings for each home's exact coordinates, sorted worst-first and shown above
+everything else. An alert at a home you are *not* currently viewing still gets
+flagged, because a hurricane watch on the Carolina house does not matter less
+because you happen to be looking at New Jersey.
+
+**🏆 Best week ahead** — all three homes ranked over the next seven days on
+beach-quality and pleasant days, using the same definitions as the historical
+charts so the live view and the climate view speak one vocabulary.
+
 **⚡ Live conditions** (per home) — current temperature, feels-like, humidity, dew point, wind
 and gusts, pressure, cloud cover, visibility, UV index, air quality, today's
 precipitation, and a sunrise → now → sunset progress bar. Every tab shows its
@@ -49,10 +59,17 @@ cross-linked to a focus month:
 | 🌅 Sun & sky | year-long daylight ribbon · average sunrise/sunset/solar noon by month · average daylight |
 | 💨 Air & wind | humidity · dew point · cloud cover · peak wind · peak gust · pressure |
 | 📊 Threshold days | days ≥ 90°F · days ≤ 32°F · beach days · pleasant days |
+| 🌀 Wind & storms | breezy days · gale-force (39 mph) days · damaging-wind (58 mph) days |
+| 📈 Year-by-year trends | mean temperature, daily high, daily low, precipitation, days ≥ 90°F, days ≤ 32°F, sunny days, snowfall — each with a least-squares slope per decade and an r² |
 | ⚡ Energy & growing | heating degree days · cooling degree days · growing degree days · evapotranspiration |
 
 **🔀 Compare all three homes** — pick any of the 48 measures and see all three
 homes on one axis, plus a side-by-side table with annual totals.
+
+**🌱 Frost dates & growing season** — average last spring freeze, first fall
+freeze, the length of the season between them, and the date by which nine years
+in ten are frost-free. A home that never freezes says so instead of inventing a
+date.
 
 **🗂️ Monthly data table** — all 48 measures in 49 columns, sortable by any
 column, click a row to open that month. Exports to CSV with full provenance in
@@ -75,6 +92,8 @@ from [Open-Meteo](https://open-meteo.com/) — free, no API key, no account.
 | Ocean temperature and waves | Open-Meteo Marine API |
 | Air quality | Open-Meteo Air Quality API (CAMS), US AQI scale |
 | Sunrise, sunset, solar noon, daylight | computed locally — NOAA solar equations |
+| Severe weather alerts | US National Weather Service (api.weather.gov) |
+| Accuracy check | NOAA NCEI 1991–2020 station normals |
 
 The normals are **precomputed and committed** to `data/climate.json`, so opening
 the page makes no historical API requests at all — it loads one small file and
@@ -153,6 +172,29 @@ a 10-year record high reads about **2.5°F milder** than a 30-year one, simply
 because ten years offers fewer chances to catch an extreme. The longer windows
 are one click away when the fuller record is what you want.
 
+### How accurate is this, actually?
+
+ERA5 runs on a ~28 km grid. A coastal cell mixes land and sea, which pulls
+summer maxima down — the first build had North Myrtle Beach at an 86°F July high
+against a published ~89°F, and 6 days a year over 90°F against a real 20–30.
+
+Rather than assume a fix, the project measures it. `scripts/validate-climate.mjs`
+compares three sources over the **identical** 1991–2020 window, so model bias is
+isolated from the real warming between periods:
+
+1. **NOAA NCEI monthly normals** — gauge observations, ground truth
+2. **Open-Meteo `era5`** — ~28 km
+3. **Open-Meteo `era5_land`** — ~9 km, land only
+
+It reports the mean bias per home per variable and names which model sits closer,
+writing the result to `data/validation.json` for the dashboard to display. The
+archive requests ask for **ERA5-Land first** and fall back to ERA5 automatically
+if a variable is missing or coverage drops below 80% — a land-only model returns
+nulls over water, and that is better caught than published.
+
+The check runs in CI after every rebuild and never fails the build; a NOAA outage
+should not block a good climate refresh.
+
 ### Definitions used
 
 | Term | Definition |
@@ -196,8 +238,10 @@ way everywhere rather than implying otherwise.
 | `manifest.json`, `icon.svg` | PWA metadata and icon |
 | `serve.py` | Local static server |
 | `test/unit.mjs` | 71 assertions on the aggregation maths |
-| `test/e2e.mjs` | 119 browser assertions across 23 groups, against a mocked Open-Meteo |
+| `test/e2e.mjs` | 146 browser assertions across 27 groups, against mocked Open-Meteo and NWS |
 | `test/build-script.mjs` | 41 assertions on the precompute script, its quota maths and merge behaviour |
+| `test/validate-script.mjs` | 13 assertions on the bias maths, including that the verdict flips when the models swap places |
+| `scripts/validate-climate.mjs` | Cross-checks the reanalysis against NOAA station normals |
 | `test/mock.mjs` | Synthetic API responses shaped like the real ones |
 
 ---
@@ -216,6 +260,7 @@ A server is required — browsers block `fetch()` from `file://` URLs.
 ```bash
 node test/unit.mjs                       # aggregation maths, no network
 node test/build-script.mjs               # precompute script + quota maths, mocked API
+node test/validate-script.mjs           # NOAA-comparison maths, mocked sources
 npm install --no-save playwright         # first time only
 node test/e2e.mjs                        # full UI, mocked APIs
 node test/e2e.mjs --headed               # watch it run

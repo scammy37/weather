@@ -170,6 +170,10 @@ const METRICS = [
   { key:'beachDays',    label:'Beach Days',          unit:'days', dec:1, group:'thresh',better:'high', color:'#f59e0b', desc:'High 75–95°F, < 0.04 in rain, sunshine ≥ 50% of daylight' },
   { key:'pleasantDays', label:'Pleasant Days',       unit:'days', dec:1, group:'thresh',better:'high', color:'#16a34a', desc:'High 65–85°F, low ≥ 45°F, < 0.04 in rain' },
 
+  { key:'breezyDays',     label:'Breezy Days',        unit:'days', dec:1, group:'wind', better:null, color:'#0e7490', desc:'Days gusting to 25 mph or more' },
+  { key:'strongWindDays', label:'Gale-Force Days',    unit:'days', dec:1, group:'wind', better:null, color:'#0f766e', desc:'Days gusting to 39 mph — tropical-storm force' },
+  { key:'severeWindDays', label:'Damaging Wind Days', unit:'days', dec:2, group:'wind', better:null, color:'#134e4a', desc:'Days gusting to 58 mph — the severe-thunderstorm threshold' },
+
   { key:'hdd',          label:'Heating Degree Days', unit:'HDD',  dec:0, group:'energy',better:null, color:'#2563eb', desc:'Σ max(0, 65°F − daily mean) — heating demand' },
   { key:'cdd',          label:'Cooling Degree Days', unit:'CDD',  dec:0, group:'energy',better:null, color:'#dc2626', desc:'Σ max(0, daily mean − 65°F) — cooling demand' },
   { key:'gdd',          label:'Growing Degree Days', unit:'GDD',  dec:0, group:'energy',better:null, color:'#16a34a', desc:'Σ max(0, daily mean − 50°F) — plant growth' },
@@ -186,6 +190,8 @@ const GROUPS = {
   sky:    { label:'Sun & Sky Times',    icon:'🌅' },
   air:    { label:'Air & Wind',         icon:'💨' },
   thresh: { label:'Threshold Days',     icon:'📊' },
+  wind:   { label:'Wind & Storms',      icon:'🌀' },
+  trend:  { label:'Year-by-Year Trends',icon:'📈' },
   energy: { label:'Energy & Growing',   icon:'⚡' }
 };
 

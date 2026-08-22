@@ -31,3 +31,5 @@ jobs:
       # browser download, which would add minutes to every push. Run it
       # locally with `node test/e2e.mjs`.
       - run: node test/unit.mjs
+      - run: node test/build-script.mjs
+      - run: node test/validate-script.mjs

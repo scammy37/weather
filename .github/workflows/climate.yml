@@ -73,6 +73,15 @@ jobs:
           [ "$code" -eq 2 ] && echo "::warning::Some home/period sets failed; committing the rest."
           exit 0
 
+      - name: Validate against NOAA ground truth
+        # Compares ERA5 and ERA5-Land against NOAA NCEI 1991-2020 station
+        # normals over the identical window, so model bias is separated from
+        # real warming between periods. Never fails the build — a NOAA outage
+        # must not block a good climate refresh — but the numbers land in the
+        # log and in data/validation.json for the dashboard to show.
+        continue-on-error: true
+        run: node scripts/validate-climate.mjs
+
       - name: Sanity-check the output
         run: |
           node -e "
@@ -100,7 +109,8 @@ jobs:
           # on run #2: the build succeeded, the file was written, and the job
           # went green having committed nothing.
           git add data/climate.json
-          if git diff --cached --quiet -- data/climate.json; then
+          [ -f data/validation.json ] && git add data/validation.json || true
+          if git diff --cached --quiet -- data/climate.json data/validation.json; then
             echo "data/climate.json is byte-identical to what is committed — nothing to do."
             exit 0
           fi
