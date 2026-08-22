@@ -603,12 +603,42 @@ async function main() {
      fill.covered / fill.gridW > 0.95, JSON.stringify(fill));
   ok('with only a hairline between them', fill.gaps.every(g => g <= 10), JSON.stringify(fill.gaps));
 
+  /* The five blocks of the overview — quick reference, radar, three homes —
+     are one height. They are driven by a single CSS variable, so this is
+     really asserting that nothing has grown past it and started clipping. */
+  const five = await page.evaluate(() => {
+    const h = e => Math.round(e.getBoundingClientRect().height);
+    const cards = [...document.querySelectorAll('.ov-card')];
+    return {
+      quick: h(document.querySelector('table.qr').closest('.panel')),
+      radar: h(document.getElementById('radarRow')),
+      cards: cards.map(h),
+      clipped: cards.map(c => c.scrollHeight - c.clientHeight),
+      moreAlign: getComputedStyle(document.querySelector('.ov-more')).textAlign
+    };
+  });
+  const heights = [five.quick, five.radar, ...five.cards];
+  ok('quick reference, radar and all three homes are the same height',
+     Math.max(...heights) - Math.min(...heights) <= 6, JSON.stringify(five));
+  /* Equal heights are worthless if they were reached by cutting content off. */
+  ok('and none of the cards is clipping its content',
+     five.clipped.every(v => v <= 0), JSON.stringify(five.clipped));
+  ok('the full-dashboard link sits on the left of the card',
+     five.moreAlign === 'left', five.moreAlign);
+
   const readBoxes = pg => pg.$$eval('#radarRow .ov-radar-btn', bs => bs.map(b => {
     const r = b.getBoundingClientRect();
     return { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) };
   }));
   const boxes = await readBoxes(page);
-  ok('every radar is square', boxes.every(b => Math.abs(b.w - b.h) <= 1), JSON.stringify(boxes));
+  /* Not square any more, and it cannot be: filling the row in equal parts AND
+     matching the other four blocks' height fixes both dimensions independently.
+     What still has to hold is that all three are identical, so the three homes
+     can be compared against each other at a glance. */
+  ok('every radar is the same shape as the others',
+     new Set(boxes.map(b => `${b.w}x${b.h}`)).size === 1, JSON.stringify(boxes));
+  ok('and each is wider than it is tall, not a sliver',
+     boxes.every(b => b.h >= 120 && b.w > b.h), JSON.stringify(boxes));
   ok('all three are the same size',
      new Set(boxes.map(b => b.w)).size === 1, JSON.stringify(boxes.map(b => b.w)));
   ok('and none is so small it shows nothing', boxes.every(b => b.w >= 120), JSON.stringify(boxes));
@@ -671,9 +701,10 @@ async function main() {
     const b = await readBoxes(page);
     ok(`at ${w}px the three radars are still side by side`,
        b.length === 3 && new Set(b.map(x => x.top)).size === 1, JSON.stringify(b.map(x => x.top)));
-    ok(`at ${w}px they are still square and equal`,
-       b.every(x => Math.abs(x.w - x.h) <= 1) && new Set(b.map(x => x.w)).size === 1,
-       JSON.stringify(b));
+    ok(`at ${w}px all three are still identical in size`,
+       new Set(b.map(x => `${x.w}x${x.h}`)).size === 1, JSON.stringify(b));
+    ok(`at ${w}px none has collapsed to a sliver`,
+       b.every(x => x.h >= 120), JSON.stringify(b.map(x => x.h)));
     ok(`at ${w}px the page does not scroll sideways`,
        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth <= 1));
   }

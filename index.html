@@ -212,7 +212,11 @@
      them. */
   .rr-slot { width:100%; }
   .ov-radar-btn {
-    display:block; width:100%; aspect-ratio:1/1; padding:0; overflow:hidden; position:relative;
+    /* Height is derived from the shared block height rather than the aspect
+       ratio, so this panel matches the other four. Filling the row AND staying
+       square AND being this short cannot all be true at once; the width wins,
+       which makes these wide crops of the sweep rather than squares. */
+    display:block; width:100%; height:var(--rr-h); padding:0; overflow:hidden; position:relative;
     border:1px solid var(--border); border-radius:11px; background:var(--surface2);
     cursor:zoom-in; font-family:inherit;
   }
@@ -231,16 +235,14 @@
     background:rgba(0,0,0,.6); color:#fff; font-size:.74rem; line-height:22px; text-align:center;
   }
   .ov-radar-ph {
-    width:100%; aspect-ratio:1/1; border:1px dashed var(--border); border-radius:11px;
+    width:100%; height:var(--rr-h); border:1px dashed var(--border); border-radius:11px;
     display:flex; align-items:center; justify-content:center;
     color:var(--muted); font-size:.72rem; background:var(--surface2);
   }
   /* Only on a phone, where three across would be about 100px each. */
   @media(max-width:560px){
     .rr-grid { grid-template-columns:1fr; }
-    .rr-cell { align-items:center; }
-    .rr-slot { max-width:320px; }
-    .rr-name { align-self:flex-start; }
+    :root { --rr-h: 150px; }
   }
 
   /* ---- full-size radar viewer ------------------------------------------ */
@@ -269,23 +271,47 @@
   /* ---- all-homes overview ---------------------------------------------- */
   /* Wider tiles in the cross-home strip: these hold place names, not numbers. */
   #liveHost .panel .stat-grid { grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
+  /* The quick-reference panel is the shortest of the five naturally, so it is
+     padded up to the shared height rather than the others being cut down. */
+  #liveHost .panel:has(table.qr) { min-height:var(--ov-h); }
+  /* One height for the five blocks of the overview: the quick-reference panel,
+     the radar panel and the three home cards. The quick-reference table sets
+     it — it is the least compressible of the five, being a fixed number of
+     rows — and everything else is sized to match. Change this one number and
+     all five follow. */
+  /* 278px is what a home card needs to show its readings, sun times and week
+     without clipping. The quick-reference panel is padded up to it rather than
+     the cards being cut down to 247 — losing content to hit a round number is
+     the wrong trade. Everything still shrank: the radar panel was 517px and
+     the cards were 354px. */
+  :root { --ov-h: 278px; --rr-h: calc(var(--ov-h) - 107px); }
   .ov-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:18px; }
   @media(max-width:1080px){ .ov-grid{ grid-template-columns:1fr; } }
   .ov-card {
+    height:var(--ov-h);
     background:var(--surface); border:1px solid var(--border); border-top:4px solid var(--accent);
-    border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 18px 14px;
+    border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 14px 10px;
     cursor:pointer; transition:transform .14s, box-shadow .14s;
-    display:flex; flex-direction:column; gap:11px;
+    display:flex; flex-direction:column; gap:6px; overflow:hidden;
   }
+  /* The week strip is the one part that can give: it absorbs whatever height
+     is left after the readings, and the footer link sits under it. */
+  .ov-card .ov-week { margin-top:auto; }
+  /* The Köppen line is the first thing cut to reach the shared height: it is
+     the least urgent thing on the card and the only element whose height
+     differs between homes — Rockaway's wraps to two lines and the others do
+     not — so keeping it would make equal heights impossible anyway. It is
+     still on each home's own page. */
+  .ov-card .ov-blurb { display:none; }
   .ov-card:hover { transform:translateY(-3px); box-shadow:0 4px 20px rgba(11,11,11,.12); }
   body.dark .ov-card:hover { box-shadow:0 4px 22px rgba(0,0,0,.55); }
-  .ov-head { display:flex; align-items:flex-start; gap:11px; }
+  .ov-head { display:flex; align-items:flex-start; gap:9px; }
   .ov-emoji { font-size:1.7rem; line-height:1.1; }
   .ov-name { font-size:1rem; font-weight:700; letter-spacing:-.01em; }
   .ov-blurb { font-size:.72rem; color:var(--muted); margin-top:2px; line-height:1.4; }
   .ov-now { display:flex; align-items:center; gap:12px; }
-  .ov-ico { font-size:2.5rem; line-height:1; }
-  .ov-temp { font-size:2.7rem; font-weight:800; letter-spacing:-.035em; line-height:1; }
+  .ov-ico { font-size:1.9rem; line-height:1; }
+  .ov-temp { font-size:2.1rem; font-weight:800; letter-spacing:-.035em; line-height:1; }
   .ov-meta { display:flex; flex-direction:column; gap:2px; min-width:0; }
   .ov-cond { font-size:.83rem; font-weight:600; color:var(--ink2); }
   .ov-feels { font-size:.74rem; color:var(--muted); }
@@ -299,7 +325,7 @@
   .ov-sun { font-size:.72rem; color:var(--muted); line-height:1.5; }
   .ov-week {
     display:grid; grid-template-columns:repeat(7,1fr); gap:3px;
-    border-top:1px solid var(--border); padding-top:11px; margin-top:auto;
+    border-top:1px solid var(--border); padding-top:7px; margin-top:auto;
   }
   .ov-day { text-align:center; }
   .ov-dow  { font-size:.62rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:-.01em; }
@@ -307,7 +333,7 @@
   .ov-dhi  { font-size:.78rem; font-weight:700; }
   .ov-dlo  { font-size:.7rem; color:var(--muted); }
   .ov-dpop { font-size:.6rem; font-weight:700; color:var(--accent); min-height:.8em; }
-  .ov-more { font-size:.74rem; font-weight:700; color:var(--accent); text-align:right; }
+  .ov-more { font-size:.74rem; font-weight:700; color:var(--accent); text-align:left; }
 
   /* ---- forecast strip -------------------------------------------------- */
   .fc-strip { display:grid; grid-template-columns:repeat(7,1fr); gap:9px; }
@@ -540,13 +566,13 @@
   <span id="footMeta"></span>
 </footer>
 
-<script src="js/config.js?v=b1317a0a03"></script>
-<script src="js/units.js?v=b1317a0a03"></script>
-<script src="js/solar.js?v=b1317a0a03"></script>
-<script src="js/api.js?v=b1317a0a03"></script>
-<script src="js/climate.js?v=b1317a0a03"></script>
-<script src="js/charts.js?v=b1317a0a03"></script>
-<script src="js/app.js?v=b1317a0a03"></script>
+<script src="js/config.js?v=9568820e07"></script>
+<script src="js/units.js?v=9568820e07"></script>
+<script src="js/solar.js?v=9568820e07"></script>
+<script src="js/api.js?v=9568820e07"></script>
+<script src="js/climate.js?v=9568820e07"></script>
+<script src="js/charts.js?v=9568820e07"></script>
+<script src="js/app.js?v=9568820e07"></script>
 <script>
   /* Progressive install + offline shell. Skipped on file:// where service
      workers are not permitted, and non-fatal if registration is refused. */
