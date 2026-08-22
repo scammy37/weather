@@ -677,14 +677,18 @@ function mountRadarThumb(slot, l) {
       slot.innerHTML = `<div class="ov-radar-ph">no radar</div>`;
       return;
     }
+    /* A wide band rather than a square: the loop is square with the station at
+       its centre, so cropping the top and bottom keeps exactly the part that
+       matters and spends the card's horizontal space instead of leaving a
+       column of white beside a narrow stack of readings. */
     slot.innerHTML = `
       <button type="button" class="ov-radar-btn js-radar-open"
               aria-label="Enlarge the ${esc(st.id)} radar loop covering ${esc(l.name)}">
         <img src="${esc(st.loop)}?t=${Date.now()}" class="ov-radar-img" loading="lazy"
              alt="Weather radar loop for station ${esc(st.id)}, covering ${esc(l.name)}">
+        <span class="ov-radar-cap">${esc(st.id)}</span>
         <span class="ov-radar-zoom" aria-hidden="true">⤢</span>
-      </button>
-      <div class="ov-radar-cap">${esc(st.id)}${st.fallback ? '' : ' · nearest'}</div>`;
+      </button>`;
 
     const img = slot.querySelector('img');
     img.addEventListener('error', () => { slot.innerHTML = `<div class="ov-radar-ph">radar<br>offline</div>`; });
@@ -846,8 +850,8 @@ function renderOverview(host) {
           <div class="ov-chips">${chips.map(([i, v, t]) =>
             `<span class="ov-chip" title="${esc(t)}"><span aria-hidden="true">${i}</span> ${esc(v)}</span>`).join('')}</div>
         </div>
-        <div class="ov-radar js-ov-radar"></div>
       </div>
+      <div class="ov-radar js-ov-radar"></div>
       <div class="ov-sun">🌅 ${esc(fmtMinutes(riseMin))} · 🌇 ${esc(fmtMinutes(setMin))} ·
         ${esc(fmtDuration(sun.daylightMinutes))}${nowMin != null && riseMin != null && setMin != null
           ? ` · ${esc(daylightProgress(nowMin, riseMin, setMin))}` : ''}</div>

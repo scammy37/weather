@@ -178,11 +178,28 @@ async function main() {
   ok('overview mode explains where the per-home detail lives',
      (await page.textContent('#climateStatus')).includes('pick it from the tabs'));
   ok('overview mode hides the single-home charts', (await page.$$('#charts .chart')).length === 0);
-  /* Clicking a card is the drill-down path. */
-  await page.click('.ov-card:nth-child(2)');
+  /* Clicking a card is the drill-down path — but the radar band sits across
+     the middle of the card and deliberately does NOT navigate, so this clicks
+     the header rather than the card's geometric centre. Both behaviours are
+     asserted: the ambiguity is the whole reason to pin it down. */
+  await page.click('.ov-card:nth-child(2) .ov-head');
   await page.waitForSelector('.now-temp', { timeout: 15000 });
   ok('clicking a card opens that home',
      !(await page.getAttribute('.tab[data-id="all"]', 'class')).includes('on'));
+  await page.click('.tab[data-id="all"]');
+  await page.waitForSelector('.ov-card', { timeout: 15000 });
+  /* Every other part of the card must still open the home, or the radar has
+     quietly eaten the card's job. */
+  for (const part of ['.ov-now', '.ov-week', '.ov-more']) {
+    await page.click(`.ov-card:nth-child(2) ${part}`);
+    await page.waitForSelector('.now-temp', { timeout: 15000 }).catch(() => {});
+    ok(`clicking ${part} still opens the home`,
+       (await page.$$('#radarModal')).length === 0 &&
+       !(await page.getAttribute('.tab[data-id="all"]', 'class')).includes('on'),
+       part);
+    await page.click('.tab[data-id="all"]');
+    await page.waitForSelector('.ov-card', { timeout: 15000 });
+  }
   await page.click('.tab[data-id="all"]');
   await page.waitForSelector('.ov-card', { timeout: 15000 });
   ok('the All tab returns to the overview', (await page.$$('.ov-card')).length === 3);

@@ -191,40 +191,40 @@
   .radar-wrap a { display:block; width:100%; }
   .radar-loading { padding:40px 20px; color:var(--muted); font-size:.85rem; text-align:center; }
 
-  /* ---- radar thumbnail on each overview card --------------------------- */
-  .ov-mid { display:flex; gap:12px; align-items:flex-start; }
-  /* min-width:0 or the left column refuses to shrink and the card overflows. */
-  .ov-mid-l { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:11px; }
-  .ov-radar { flex:0 0 132px; width:132px; display:flex; flex-direction:column; gap:4px; }
+  /* ---- radar band on each overview card -------------------------------- */
+  /* Full width and short. A square in a side column pushed the readings into a
+     narrow stack and left white space beside it; a band spends the width the
+     card already has. */
+  .ov-mid { display:flex; flex-direction:column; gap:11px; }
+  .ov-mid-l { display:flex; flex-direction:column; gap:11px; min-width:0; }
+  .ov-radar { width:100%; }
   .ov-radar-btn {
-    display:block; width:132px; height:132px; padding:0; overflow:hidden; position:relative;
+    display:block; width:100%; height:62px; padding:0; overflow:hidden; position:relative;
     border:1px solid var(--border); border-radius:10px; background:var(--surface2);
     cursor:zoom-in; font-family:inherit;
   }
   .ov-radar-btn:hover { border-color:var(--accent); }
   .ov-radar-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  /* The NWS loop is square with the station centred, so cover crops evenly. */
+  /* The loop is square with the station at its centre, so cover crops the top
+     and bottom and keeps the station in view. */
   .ov-radar-img { width:100%; height:100%; object-fit:cover; display:block; }
-  .ov-radar-zoom {
-    position:absolute; right:5px; bottom:5px; width:21px; height:21px; border-radius:6px;
-    background:rgba(0,0,0,.62); color:#fff; font-size:.72rem; line-height:21px; text-align:center;
+  .ov-radar-cap {
+    position:absolute; left:6px; bottom:6px; padding:1px 6px; border-radius:5px;
+    background:rgba(0,0,0,.6); color:#fff; font-size:.6rem; font-weight:700; letter-spacing:.03em;
   }
-  .ov-radar-cap { font-size:.62rem; color:var(--muted); text-align:center; letter-spacing:.02em; }
+  .ov-radar-zoom {
+    position:absolute; right:6px; bottom:6px; width:20px; height:20px; border-radius:5px;
+    background:rgba(0,0,0,.6); color:#fff; font-size:.7rem; line-height:20px; text-align:center;
+  }
   .ov-radar-ph {
-    width:132px; height:132px; border:1px dashed var(--border); border-radius:10px;
-    display:flex; align-items:center; justify-content:center; text-align:center;
+    width:100%; height:62px; border:1px dashed var(--border); border-radius:10px;
+    display:flex; align-items:center; justify-content:center;
     color:var(--muted); font-size:.66rem; background:var(--surface2);
   }
-  /* Below the three-across breakpoint the cards are full width, so the radar
-     can afford to be larger; below phone width it stacks under the readings. */
+  /* One card per row below this width, so the band can be taller without
+     costing anything. */
   @media(max-width:1080px){
-    .ov-radar, .ov-radar-btn, .ov-radar-ph { flex-basis:172px; width:172px; height:172px; }
-    .ov-radar { height:auto; }
-  }
-  @media(max-width:560px){
-    .ov-mid { flex-direction:column; }
-    .ov-radar, .ov-radar-btn, .ov-radar-ph { width:100%; flex-basis:auto; }
-    .ov-radar-btn, .ov-radar-ph { height:200px; }
+    .ov-radar-btn, .ov-radar-ph { height:120px; }
   }
 
   /* ---- full-size radar viewer ------------------------------------------ */
