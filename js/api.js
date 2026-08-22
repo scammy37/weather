@@ -41,10 +41,17 @@ const UNITS = 'temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_uni
    Myrtle Beach), and ERA5-Land returned NO precipitation or snowfall at all,
    which silently wiped the rain and snow charts.
 
-   So the default stands, and the theory is recorded rather than repeated.
+   ERA5 is now named explicitly rather than left to Open-Meteo's default.
+   The default is a best-match selection, and it does not always resolve to the
+   model the validation measured: at North Myrtle Beach the default gave an
+   86.0°F July high for 2016–2025 while explicit era5 gave 87.6°F for the
+   COOLER 1991–2020 window, against a NOAA normal of 87.4°F. A more recent
+   decade reading 1.6°F colder is not warming; it is a different model. Naming
+   the model makes the published figures the ones the bias numbers describe.
+
    scripts/validate-climate.mjs re-measures both models on every rebuild; if
    ERA5-Land ever wins, this is the one line to change. */
-const ARCHIVE_MODEL = null;
+const ARCHIVE_MODEL = 'era5';
 const MIN_COVERAGE = 0.8;
 
 /* Variables a model must actually deliver before its data is accepted.
@@ -440,23 +447,53 @@ async function fetchArchive(loc, period, onProgress) {
     bump(`${loc.short}: ${c.start.slice(0, 4)}–${c.end.slice(0, 4)}`);
   }
 
-  /* Extended variables — best effort. */
+  /* Extended variables — best effort.
+
+     These are requested on the SAME model as the core variables wherever
+     possible: sunny days come from cloud cover here while temperatures come
+     from the core request, and two different models behind one month's row
+     would be a silent inconsistency nobody could see on the page.
+
+     But "best effort" has to mean it: cloud cover and mean sea-level pressure
+     are not fields every reanalysis carries, and a named model that quietly
+     answers with empty arrays would blank the humidity, cloud and pressure
+     charts — the exact failure ERA5-Land caused for precipitation. So a thin
+     or failed response falls back to the API's default model rather than
+     dropping the variables. */
   const extParts = [];
-  let extOk = true;
+  let extOk = true, extModel = model, extNote = '';
   for (const c of chunks) {
     if (!extOk) { bump(`${loc.short}: extended skipped`); continue; }
-    try {
-      /* Extended variables stay on the default model: cloud cover and mean
-         sea-level pressure are not ERA5-Land fields. */
-      extParts.push(await apiGet(base(c, ARCHIVE_EXT, null), {
-        label: `Archive extended ${c.start.slice(0,4)}–${c.end.slice(0,4)} — ${loc.name}`,
-        retries: 1, timeout: 60000
-      }));
-    } catch (_) {
-      extOk = false;   // one rejection means the whole variable set is unsupported
+    const label = `Archive extended ${c.start.slice(0,4)}–${c.end.slice(0,4)} — ${loc.name}`;
+    let part = null;
+    if (extModel) {
+      try {
+        part = await apiGet(base(c, ARCHIVE_EXT, extModel), {
+          label: `${label} [${extModel}]`, retries: 1, timeout: 60000 });
+        const thin = ARCHIVE_EXT
+          .map(k => [k, coverage(part.daily && part.daily[k])])
+          .filter(([, cov]) => cov < MIN_COVERAGE);
+        if (thin.length) {
+          part = null;
+          extNote = `extended on ${extModel} rejected (${thin.map(([k]) => k).join(', ')}) — using the default model`;
+          extModel = null;
+        }
+      } catch (_) {
+        extNote = `extended on ${extModel} unavailable — using the default model`;
+        extModel = null;
+      }
     }
+    if (!part) {
+      try {
+        part = await apiGet(base(c, ARCHIVE_EXT, null), { label, retries: 1, timeout: 60000 });
+      } catch (_) {
+        extOk = false;   // one rejection means the whole variable set is unsupported
+      }
+    }
+    if (part) extParts.push(part);
     bump(`${loc.short}: extended ${c.start.slice(0, 4)}–${c.end.slice(0, 4)}`);
   }
+  if (extNote) modelNote = modelNote ? `${modelNote}; ${extNote}` : extNote;
 
   const daily = mergeDaily(coreParts);
   if (extOk && extParts.length) {

@@ -68,6 +68,11 @@ async function init() {
   renderDiagnostics();
   renderFooter();
 
+  /* How far the published normals sit from a real NOAA thermometer. Small
+     file, never blocks the page, re-renders whatever is on screen when it
+     lands. */
+  loadValidation().then(() => { renderDiagnostics(); renderClimate(); });
+
   /* Normals are heavier — start after the page is interactive. The overview is
      the default view, so the comparison set is what needs warming. */
   if (isAll()) loadCompareSet(); else loadClimate(S.locId, S.period);
@@ -189,6 +194,9 @@ function selectLocation(id) {
   S.locId = id; S.month = -1; S.fcDay = -1;
   $('selMonth').value = '-1';
   buildTabs(); renderLive(); renderClimate(); renderBanners();
+  /* The Data Sources panel names this home's tide gauge, marine point and
+     measured accuracy, so it goes stale the moment the home changes. */
+  renderDiagnostics();
   if (isAll()) loadCompareSet(); else loadClimate(S.locId, S.period);
 }
 
@@ -903,6 +911,31 @@ function renderHourly(host, l, d) {
    the snapshot does not carry.
    ------------------------------------------------------------------------- */
 let SNAPSHOT = null;          // null = not loaded yet, false = unavailable
+let VALIDATION = null;        // measured bias against NOAA station normals
+
+/* The accuracy report produced by scripts/validate-climate.mjs.
+
+   Loaded at boot rather than from loadClimate(), because loadClimate() never
+   runs on the three-home overview — which is the view the page opens on. Hung
+   off the climate load, the Data Sources panel sat on "comparing…" until you
+   picked a single home. Its absence hides the disclosure rather than breaking
+   anything. */
+async function loadValidation() {
+  if (VALIDATION !== null) return VALIDATION;
+  const entry = diagStart('Accuracy check vs NOAA — data/validation.json', 'data/validation.json');
+  try {
+    const res = await fetch('data/validation.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (!j || !j.homes) throw new Error('unexpected shape');
+    VALIDATION = j;
+    diagEnd(entry, 'ok', `${Object.keys(j.homes).length} homes compared against NOAA station normals, ${j.window}`);
+  } catch (err) {
+    VALIDATION = false;
+    diagEnd(entry, 'warn', `${String(err && err.message || err)} — the accuracy disclosure is hidden`);
+  }
+  return VALIDATION;
+}
 
 async function loadSnapshot() {
   if (SNAPSHOT !== null) return SNAPSHOT;
@@ -1065,7 +1098,7 @@ function renderClimate() {
     return;
   }
 
-  box.innerHTML = climateNotes(c) + frostPanel(c);
+  box.innerHTML = accuracyNote() + climateNotes(c) + frostPanel(c);
   renderKPIs(); renderDetail(); renderCharts(); renderTable();
 }
 
@@ -1085,6 +1118,29 @@ function rateLimitBanner(c) {
     : `The precomputed normals file is missing, so every period has to be built live.
       See the Data sources panel below.`}
     <br>Live conditions and the forecast above are unaffected — they are tiny by comparison.
+    </div></div>`;
+}
+
+/* How far the reanalysis sits from the nearest NOAA weather station, measured
+   over an identical window. Stated plainly because a reader comparing these
+   figures against a memory of their own thermometer deserves to know. */
+function accuracyNote() {
+  const v = VALIDATION;
+  const l = loc();
+  const e = v && v.homes && v.homes[l.id];
+  const b = e && e.models && e.models.era5 && e.models.era5.vsNoaa;
+  if (!b || !b.tmax || !b.tmin) return '';
+  const sign = n => (n >= 0 ? '+' : '') + n.toFixed(1);
+  const station = e.noaa ? e.noaa.stationId : 'the nearest station';
+  return `<div class="banner info"><span class="bico">🎯</span><div>
+    <b>How close these figures are to a real thermometer.</b>
+    Measured against NOAA station ${esc(station)} over the same ${esc(v.window)} window,
+    this reanalysis runs <b>${esc(sign(b.tmax.meanBias))}°F</b> on daily highs and
+    <b>${esc(sign(b.tmin.meanBias))}°F</b> on overnight lows.
+    ${b.tmin.meanBias > 2 ? `The warm bias in the lows is inherent to a gridded model —
+      it averages over an area and smooths away the overnight cooling a thermometer
+      in a field records. Treat the low temperatures as a few degrees optimistic.` : ''}
+    ${b.prcp ? `Precipitation is ${esc(sign(b.prcp.meanBias))} in per month.` : ''}
     </div></div>`;
 }
 
@@ -1635,6 +1691,7 @@ function renderDiagnostics() {
   const rows = DIAG.slice(-60).reverse();
   const pill = s => s === 'ok' ? '<span class="pill ok">✓ ok</span>'
                  : s === 'fail' ? '<span class="pill bad">✕ failed</span>'
+                 : s === 'warn' ? '<span class="pill warn">! optional</span>'
                  : '<span class="pill wait">⋯ pending</span>';
   t.innerHTML = rows.length
     ? rows.map(r => `<tr>
@@ -1650,9 +1707,11 @@ function renderDiagnostics() {
     <div><b>Live conditions, 7-day forecast and hourly detail</b> — Open-Meteo Forecast API, refreshed on every page load.</div>
     <div><b>Monthly normals</b> — Open-Meteo Historical Weather API (ECMWF <b>ERA5</b> reanalysis family),
       ${PERIODS[S.period].years} years of daily records${c && c.meta && c.meta.model ? `, model <code>${esc(c.meta.model)}</code>` : ''}.
-      ERA5-Land runs on a ~5.6 mile grid and ERA5 on ~17 miles; the finer one is requested first because a
-      coastal cell on the coarse grid mixes land and sea and reads a few degrees cool in summer.
+      The model is named explicitly rather than left to the API's best-match selection, so the figures
+      you see are the same ones the accuracy check below measured. ERA5-Land, the finer ~5.6 mile grid,
+      was tried and rejected: it returned no precipitation or snowfall at all for these locations.
       ${c && c.meta && c.meta.modelNote && c.meta.modelNote !== c.meta.model ? `<br><span style="color:var(--muted)">${esc(c.meta.modelNote)}</span>` : ''}</div>
+    <div><b>Accuracy check</b> — ${validationLine()}</div>
     <div><b>Severe weather alerts</b> — US National Weather Service (api.weather.gov), active watches and warnings for each home's exact coordinates.</div>
     <div><b>Water temperature</b> — NOAA CO-OPS tide gauge (${esc(l.marine.coopsName || 'n/a')}, station ${esc(l.marine.coopsStation || '—')}),
       a physical sensor. The marine model is shown alongside it as corroboration.</div>
@@ -1665,6 +1724,21 @@ function renderDiagnostics() {
       an assumed one. ${unitAuditLine()}</div>
     <div style="margin-top:8px;color:var(--muted)">${okCount} request${okCount === 1 ? '' : 's'} succeeded, ${failCount} failed this session.
     Normals are cached in this browser for 30 days${c && c.meta && c.meta.built ? ` · this set built ${relTime(c.meta.built)}` : ''}.</div>`;
+}
+
+/* What the accuracy comparison actually found for the home on screen, stated
+   as a number rather than a reassurance. */
+function validationLine() {
+  const v = VALIDATION;
+  if (v === null) return 'comparing the normals against NOAA station records…';
+  if (!v) return 'not available in this deployment — run <code>scripts/validate-climate.mjs</code> to generate it.';
+  const e = v.homes && v.homes[loc().id];
+  const b = e && e.models && e.models.era5 && e.models.era5.vsNoaa;
+  if (!b) return `NOAA station normals for ${esc(v.window)} are on file, but this home has no comparison.`;
+  const sign = n => (n >= 0 ? '+' : '') + n.toFixed(1);
+  return `every monthly figure is compared against NOAA station ${esc(e.noaa ? e.noaa.stationId : '—')}
+    over an identical ${esc(v.window)} window. Highs run ${esc(sign(b.tmax.meanBias))}°F,
+    lows ${esc(sign(b.tmin.meanBias))}°F${b.prcp ? `, precipitation ${esc(sign(b.prcp.meanBias))} in/month` : ''}.`;
 }
 
 /* One line summarising what the APIs said their units were, plus anything that

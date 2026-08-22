@@ -234,9 +234,9 @@ eq('an all-null series reports zero coverage', api2.coverage(empty), 0);
 eq('a quarter-populated series reports 0.25',
    api2.coverage([1, null, null, null]), 0.25);
 ok('an empty series would be rejected at the 0.8 threshold', api2.coverage(empty) < 0.8);
-ok('the archive model default is ERA5, not ERA5-Land',
-   api2.ARCHIVE_MODEL === null,
-   `ARCHIVE_MODEL is ${JSON.stringify(api2.ARCHIVE_MODEL)} — ERA5-Land returns no precipitation`);
+ok('the archive model is named explicitly, not left to best-match',
+   api2.ARCHIVE_MODEL === 'era5',
+   `ARCHIVE_MODEL is ${JSON.stringify(api2.ARCHIVE_MODEL)} — must be the model the validation measures`);
 
 console.log('\n\x1b[1maggregation reports missing precipitation as missing\x1b[0m');
 /* If a model does return empty precipitation, the totals must come back null
@@ -256,6 +256,102 @@ ok('missing snowfall data reports null, not a confident zero',
 ok('missing snow days report null too', npRows[0].snowDays === null, String(npRows[0].snowDays));
 ok('a real zero is still zero, not null',
    rows[6].snowfall === 0, String(rows[6].snowfall));
+
+/* ---------------------------------------------------------------------------
+   Archive model selection, driven through fetchArchive with a stubbed fetch.
+
+   Until now this logic was only exercised through the browser mocks, which
+   always answer completely — so the fallback paths, the ones that exist
+   precisely because a model can answer INCOMPLETELY, were never run. That is
+   how ERA5-Land shipped with no rain.
+   ------------------------------------------------------------------------- */
+console.log('\n\x1b[1marchive model selection and its fallbacks\x1b[0m');
+globalThis.PERIODS = { p1: { start: '2020-01-01', end: '2021-12-31', years: 2, label: 'p1' },
+                       p2: { start: '2000-01-01', end: '2021-12-31', years: 22, label: 'p2' } };
+const LOC = { id: 'x', name: 'Test', short: 'T', lat: 33.8, lon: -78.7, tz: 'America/New_York' };
+
+/* A full daily payload for whichever variables the URL asked for. */
+function daysBetween(a, b) {
+  const out = []; const d = new Date(a + 'T00:00:00Z'); const end = new Date(b + 'T00:00:00Z');
+  while (d <= end) { out.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
+  return out;
+}
+/* `thin` names variables to answer with nulls — a model that replies 200 OK
+   and hands back nothing, which is the failure mode that matters. */
+function stubFetch(opts = {}) {
+  const seen = [];
+  globalThis.fetch = async (url) => {
+    const u = new URL(url);
+    seen.push({ url, model: u.searchParams.get('models'),
+                vars: (u.searchParams.get('daily') || '').split(',') });
+    const model = u.searchParams.get('models');
+    if (opts.reject && opts.reject(model, seen.length)) {
+      return { ok: false, status: 400,
+               json: async () => ({ error: true, reason: 'Data corresponding to variable cannot be found' }) };
+    }
+    const time = daysBetween(u.searchParams.get('start_date'), u.searchParams.get('end_date'));
+    const daily = { time };
+    for (const v of (u.searchParams.get('daily') || '').split(',')) {
+      const isThin = opts.thin && opts.thin(v, model);
+      daily[v] = time.map((_, i) => isThin ? null : (v.includes('temperature') ? 70 + (i % 10) : 1));
+    }
+    return { ok: true, status: 200, json: async () => ({ daily, daily_units: {} }) };
+  };
+  return seen;
+}
+const realFetch = globalThis.fetch;
+
+/* 1. A model that answers completely is used, for core AND extended. */
+let seen = stubFetch();
+let res = await api2.fetchArchive(LOC, 'p1');
+ok('a complete model is used for the core variables', res.model === 'era5', res.model);
+ok('and the extended variables are requested on the same model',
+   seen.filter(r => r.vars.includes('cloud_cover_mean')).every(r => r.model === 'era5'),
+   JSON.stringify(seen.filter(r => r.vars.includes('cloud_cover_mean')).map(r => r.model)));
+ok('the extended series make it into the merged result',
+   Array.isArray(res.daily.cloud_cover_mean) && res.daily.cloud_cover_mean.length === res.daily.time.length);
+ok('and it is reported as extended', res.extended === true);
+
+/* 2. The ERA5-Land failure: perfect temperatures, no precipitation. */
+seen = stubFetch({ thin: (v, m) => m === 'era5' && /precipitation|snowfall/.test(v) });
+res = await api2.fetchArchive(LOC, 'p1');
+ok('a model with no precipitation is rejected even though its temperatures are fine',
+   res.model === 'default', res.model);
+ok('and the rejection says which variables were missing',
+   /precipitation_sum/.test(res.modelNote), res.modelNote);
+ok('the fallback data actually carries precipitation',
+   res.daily.precipitation_sum.filter(v => v != null).length === res.daily.time.length);
+
+/* 3. Extended variables missing on the named model must not lose them. */
+seen = stubFetch({ thin: (v, m) => m === 'era5' && v === 'cloud_cover_mean' });
+res = await api2.fetchArchive(LOC, 'p1');
+ok('a thin extended field does not drag the core model down with it',
+   res.model === 'era5', res.model);
+ok('the extended set falls back to the default model instead of being dropped',
+   res.daily.cloud_cover_mean && res.daily.cloud_cover_mean.every(v => v != null),
+   JSON.stringify((res.daily.cloud_cover_mean || []).slice(0, 3)));
+ok('and the fallback is disclosed rather than silent',
+   /extended on era5 rejected/.test(res.modelNote), res.modelNote);
+
+/* 4. Once the named model is rejected for extended, it is not retried on
+      every later chunk — that would double the quota cost of a long period. */
+seen = stubFetch({ thin: (v, m) => m === 'era5' && v === 'pressure_msl_mean' });
+res = await api2.fetchArchive(LOC, 'p2');
+const extNamed = seen.filter(r => r.vars.includes('pressure_msl_mean') && r.model === 'era5');
+ok('a 22-year period is split into more than one chunk',
+   seen.filter(r => r.vars.includes('pressure_msl_mean')).length > 2,
+   String(seen.filter(r => r.vars.includes('pressure_msl_mean')).length));
+ok('the rejected model is attempted once, not once per chunk',
+   extNamed.length === 1, `${extNamed.length} attempts`);
+
+/* 5. If BOTH models refuse the extended set, the core data still returns.
+      Request 1 is the core pull; every request after it is an extended one. */
+seen = stubFetch({ reject: (m, n) => n > 1 });
+res = await api2.fetchArchive(LOC, 'p1');
+ok('an unsupported extended set leaves the core climatology intact',
+   res.daily.temperature_2m_max.length > 700, String(res.daily.temperature_2m_max.length));
+ok('and it is reported as not extended, rather than pretending', res.extended === false);
+globalThis.fetch = realFetch;
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

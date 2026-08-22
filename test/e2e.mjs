@@ -44,6 +44,25 @@ async function routeRadar(pg) {
     r.fulfill({ status: 200, contentType: 'image/gif', body: GIF }));
 }
 
+/* The standard mock set, in the order these routes must be registered: routes
+   are matched in REVERSE registration order, so the narrow alerts pattern goes
+   in AFTER the general api.weather.gov one or it is never reached.
+   data/climate.json is deliberately left unrouted here — it is served from
+   disk, which is what makes a section using this helper fast. */
+async function routeAllMocks(pg) {
+  const j = (route, body) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
+  await routeRadar(pg);
+  await pg.route('**://api.tidesandcurrents.noaa.gov/**', r => j(r, coopsResponse(r.request().url())));
+  await pg.route('**://api.weather.gov/**', r => j(r, nwsResponse(r.request().url())));
+  await pg.route('**://api.weather.gov/alerts/**', r => j(r, alertsResponse(r.request().url())));
+  await pg.route('**://api.open-meteo.com/**', r => j(r, forecastResponse(r.request().url())));
+  await pg.route('**://air-quality-api.open-meteo.com/**', r => j(r, airResponse(r.request().url())));
+  await pg.route('**://archive-api.open-meteo.com/**', r => j(r, archiveResponse(r.request().url())));
+  await pg.route('**://marine-api.open-meteo.com/**', r => j(r, marineResponse(r.request().url())));
+}
+
 async function openHome(pg, id = 'nmb', timeout = 120000) {
   await pg.waitForSelector('#app:not([hidden])', { timeout: 60000 });
   await pg.click(`.tab[data-id="${id}"]`);
@@ -730,7 +749,125 @@ async function main() {
      !(await tzp.textContent('.now')).includes('NaN'));
   await tzCtx.close();
 
-  console.log('\n\x1b[1m22. Console health\x1b[0m');
+  /* ------------------------------------------------------------------
+     The accuracy disclosure. This exists because the published figures come
+     from a reanalysis model, not a thermometer, and the gap is real — up to
+     +6°F on overnight lows. A disclosure that quietly disappears is worse
+     than none, so it is asserted on the overview, on each home, and on the
+     way back to a home already cached. The overview case is the one that was
+     actually broken: the first version loaded the report from loadClimate(),
+     which never runs on the three-home overview, so the Data Sources panel
+     sat on "comparing…" until a single home was picked.
+     ------------------------------------------------------------------ */
+  console.log('\n\x1b[1m22. Accuracy disclosure vs NOAA\x1b[0m');
+  const VFIX = {
+    generated: new Date().toISOString(), window: '1991–2020',
+    homes: {
+      nmb: { name: 'North Myrtle Beach', noaa: { stationId: 'USC00386153', name: 'x', months: [] },
+        models: { era5: { vsNoaa: {
+          tmax: { meanBias: 0.39, worstMonth: 'Mar', worstBias: 1.74, n: 12 },
+          tmin: { meanBias: 3.93, worstMonth: 'Feb', worstBias: 5.35, n: 12 },
+          prcp: { meanBias: -0.15, worstMonth: 'Sep', worstBias: -0.66, n: 12 } } } } },
+      bonita: { name: 'Bonita Springs', noaa: { stationId: 'USW00012835', name: 'y', months: [] },
+        models: { era5: { vsNoaa: {
+          tmax: { meanBias: -2.71, worstMonth: 'Jul', worstBias: -3.28, n: 12 },
+          tmin: { meanBias: 1.10, worstMonth: 'Jan', worstBias: 2.02, n: 12 },
+          prcp: { meanBias: 0.22, worstMonth: 'Aug', worstBias: 1.10, n: 12 } } } } }
+    }
+  };
+  /* innerText inserts line breaks around the <b> elements that carry the
+     numbers, so every assertion here reads a whitespace-normalised copy.
+     Matching raw innerText would have silently passed on nothing. */
+  const flat = t => t.replace(/\s+/g, ' ').trim();
+  const vCtx = await browser.newContext(CTX);
+  const vp = await vCtx.newPage();
+  await routeAllMocks(vp);
+  await vp.route('**/data/validation.json', r =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(VFIX) }));
+  await vp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
+  await vp.waitForSelector('#app:not([hidden])', { timeout: 60000 });
+
+  /* The overview is the landing view and loads no per-home normals, so the
+     accuracy line has to arrive without a home being opened at all. */
+  await vp.waitForFunction(
+    () => /USC00386153/.test(document.getElementById('sourceNotes').innerText),
+    null, { timeout: 20000 }).catch(() => {});
+  const overviewDiag = flat(await vp.innerText('#sourceNotes'));
+  ok('the accuracy line is present on the overview, before any home is opened',
+     overviewDiag.includes('USC00386153') && !overviewDiag.includes('comparing the normals'),
+     overviewDiag.slice(0, 220));
+
+  await openHome(vp, 'nmb');
+  await vp.waitForFunction(
+    () => /on daily highs/.test(document.getElementById('climateStatus').innerText),
+    null, { timeout: 30000 });
+
+  const nmbNote = flat(await vp.innerText('#climateStatus'));
+  ok('the disclosure names the NOAA station it was measured against',
+     nmbNote.includes('USC00386153'), nmbNote.slice(0, 160));
+  ok('it states the measured high bias to a tenth, with its sign',
+     nmbNote.includes('+0.4°F on daily highs'), nmbNote.slice(0, 200));
+  ok('it states the measured low bias, which is the large one',
+     nmbNote.includes('+3.9°F'), nmbNote.slice(0, 200));
+  ok('a low bias above 2°F is explained, not just printed',
+     /gridded model/.test(nmbNote));
+  ok('the comparison window is stated, so it is not mistaken for our period',
+     nmbNote.includes('1991–2020'));
+
+  /* The regression this feature actually had. */
+  await vp.click('.tab[data-id="bonita"]');
+  await vp.waitForSelector('#kpis .kpi', { timeout: 120000 });
+  const bonNote = flat(await vp.innerText('#climateStatus'));
+  ok('the disclosure survives switching homes',
+     /°F on daily highs/.test(bonNote), bonNote.slice(0, 160));
+  ok('and it re-reads for the home now on screen, rather than repeating the first',
+     bonNote.includes('USW00012835') && bonNote.includes('-2.7°F') && !bonNote.includes('USC00386153'),
+     bonNote.slice(0, 200));
+  ok('a negative bias is not dressed up as a warm one',
+     !/gridded model/.test(bonNote) || bonNote.includes('+1.1°F'));
+
+  /* And going back — cached state is the path that broke before. */
+  await vp.click('.tab[data-id="nmb"]');
+  await vp.waitForSelector('#kpis .kpi', { timeout: 120000 });
+  ok('it survives returning to a home whose normals are already cached',
+     flat(await vp.innerText('#climateStatus')).includes('USC00386153'));
+
+  const diag = flat(await vp.innerText('#sourceNotes'));
+  ok('the Data Sources panel carries the accuracy line too',
+     diag.includes('Accuracy check') && diag.includes('USC00386153'), diag.slice(0, 200));
+  /* That panel also names this home's tide gauge and marine point, so it has
+     to follow the tab rather than describe whichever home loaded first. */
+  await vp.click('.tab[data-id="bonita"]');
+  await vp.waitForSelector('#kpis .kpi', { timeout: 120000 });
+  const diagB = flat(await vp.innerText('#sourceNotes'));
+  ok('and the panel follows the selected home instead of going stale',
+     diagB.includes('USW00012835') && !diagB.includes('USC00386153'), diagB.slice(0, 220));
+  ok('the panel no longer claims ERA5-Land is requested first',
+     !/finer one is requested first/.test(diag));
+  await vCtx.close();
+
+  /* Optional means optional: no report must not mean no page. */
+  const nvCtx = await browser.newContext(CTX);
+  const nvp = await nvCtx.newPage();
+  const nvErrors = [];
+  nvp.on('pageerror', e => nvErrors.push(String(e)));
+  await routeAllMocks(nvp);
+  await nvp.route('**/data/validation.json', r => r.fulfill({ status: 404, body: 'not found' }));
+  await nvp.goto(base + '/index.html', { waitUntil: 'domcontentloaded' });
+  await openHome(nvp, 'nmb');
+  const noVal = flat(await nvp.innerText('#climateStatus'));
+  ok('without the report the disclosure is absent rather than blank or broken',
+     !noVal.includes('daily highs') && !/NaN|undefined/.test(noVal), noVal.slice(0, 160));
+  ok('and the climate view still renders its normals',
+     (await nvp.$$('#kpis .kpi')).length > 0);
+  ok('a missing optional report raises no uncaught error',
+     nvErrors.length === 0, nvErrors.slice(0, 2).join(' | '));
+  const nvDiag = flat(await nvp.innerText('#sourceNotes'));
+  ok('the Data Sources panel says the report is missing instead of implying it passed',
+     /not available in this deployment/.test(nvDiag), nvDiag.slice(0, 200));
+  await nvCtx.close();
+
+  console.log('\n\x1b[1m23. Console health\x1b[0m');
   const realErrors = consoleErrors.filter(e => !/Failed to load resource|net::ERR/.test(e));
   ok('no uncaught JavaScript errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 

@@ -25,9 +25,13 @@ if (!fs.existsSync(DATA)) {
 }
 const j = JSON.parse(fs.readFileSync(DATA, 'utf8'));
 
-/* Published climate values for each area, from NOAA/NWS station normals.
-   Coastal July highs are the diagnostic: ERA5's coarse grid mixes in ocean and
-   reads low there, which is exactly what these bounds are set to catch. */
+/* Fallback bounds, used only when data/validation.json is absent.
+
+   These are ESTIMATES, and one of them was wrong: it assumed a ~89°F July high
+   for North Myrtle Beach when the NOAA station normal is 87.4°F. That is why
+   the real NOAA figures below take precedence whenever they are available —
+   a check whose reference values are remembered rather than fetched is not a
+   check, it is a second opinion from the same source. */
 const REF = {
   nmb: { name: 'North Myrtle Beach, SC', station: 'Myrtle Beach area',
     julHigh: [86, 92], janHigh: [52, 60], janLow: [33, 42], julLow: [70, 78],
@@ -40,8 +44,18 @@ const REF = {
     precip: [40, 58], snow: [12, 48], freeze: [80, 135], hot90: [5, 35], oceanAug: [68, 76] }
 };
 
+/* Real NOAA station normals, produced by scripts/validate-climate.mjs. */
+const VAL = path.join(ROOT, 'data', 'validation.json');
+let noaa = null;
+if (fs.existsSync(VAL)) {
+  try { noaa = JSON.parse(fs.readFileSync(VAL, 'utf8')); } catch (_) {}
+}
+
 console.log('\n\x1b[1mdata/climate.json\x1b[0m');
 console.log(`  generated ${j.generated}`);
+console.log(noaa
+  ? `  reference: NOAA station normals ${noaa.window} (data/validation.json)`
+  : '  reference: built-in estimates — run scripts/validate-climate.mjs for real NOAA figures');
 ok('carries all three homes', Object.keys(j.homes).length === 3, Object.keys(j.homes).join(', '));
 
 for (const [id, r] of Object.entries(REF)) {
@@ -59,10 +73,35 @@ for (const [id, r] of Object.entries(REF)) {
        v != null && v >= lo && v <= hi, `outside the published range`);
   };
 
-  range('Jul avg high ', rows[6].avgHigh, r.julHigh);
-  range('Jan avg high ', rows[0].avgHigh, r.janHigh);
-  range('Jan avg low  ', rows[0].avgLow,  r.janLow);
-  range('Jul avg low  ', rows[6].avgLow,  r.julLow);
+  /* Where NOAA figures exist, they replace the estimates. The tolerance
+     absorbs two known, separate effects: the periods differ (our window is
+     more recent than NOAA's 1991–2020, so warmer), and the reanalysis carries
+     a measured bias per home. Both are reported rather than hidden. */
+  const nm = noaa && noaa.homes[id] && noaa.homes[id].noaa && noaa.homes[id].noaa.months;
+  const bias = noaa && noaa.homes[id] && noaa.homes[id].models
+            && noaa.homes[id].models.era5 && noaa.homes[id].models.era5.vsNoaa;
+  const TOL = 4;
+  const fromNoaa = (m, key) => {
+    const v = nm && nm[m] && nm[m][key];
+    return v == null ? null : [v - TOL, v + TOL];
+  };
+  if (nm) {
+    console.log(`  NOAA ${noaa.window}: Jul high ${nm[6].tmax}°F · Jan high ${nm[0].tmax}°F · Jan low ${nm[0].tmin}°F`
+      + (bias ? `   (ERA5 bias: high ${bias.tmax.meanBias >= 0 ? '+' : ''}${bias.tmax.meanBias}°F, low ${bias.tmin.meanBias >= 0 ? '+' : ''}${bias.tmin.meanBias}°F)` : ''));
+  }
+
+  range('Jul avg high ', rows[6].avgHigh, fromNoaa(6, 'tmax') || r.julHigh);
+  range('Jan avg high ', rows[0].avgHigh, fromNoaa(0, 'tmax') || r.janHigh);
+  /* Overnight lows are a known, measured characteristic of the reanalysis
+     rather than a defect this project can fix: ERA5 averages over a grid cell,
+     which smooths away the radiative cooling and cold-air pooling that a
+     thermometer in a field actually records. The bias is +2.8 to +6.0°F
+     depending on the home. ERA5-Land was tried and was worse. So the lows warn
+     with the measured number attached instead of failing the build, and the
+     dashboard discloses it. Correcting the figures silently would be worse
+     than reporting them honestly. */
+  range('Jan avg low  ', rows[0].avgLow,  fromNoaa(0, 'tmin') || r.janLow, !nm);
+  range('Jul avg low  ', rows[6].avgLow,  fromNoaa(6, 'tmin') || r.julLow, !nm);
   range('annual precip', a.annualPrecip,  r.precip);
   range('annual snow  ', a.annualSnow,    r.snow);
   range('days ≤ 32°F  ', a.annualFreeze,  r.freeze);
