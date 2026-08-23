@@ -148,6 +148,12 @@ jobs:
             exit 1
           fi
 
+      # The rebuild's own claim, checked rather than assumed: the data it just
+      # committed must carry the fingerprint of the code that is on disk. A
+      # rebuild that quietly used stale code would be invisible otherwise.
+      - name: Confirm the rebuild used the current pipeline
+        run: node scripts/pipeline-version.mjs
+
       - name: Spot-check the numbers against published climate values
         # Deliberately the LAST step: data that is slightly off is still better
         # than stale data, so it lands either way — but the run goes red so a

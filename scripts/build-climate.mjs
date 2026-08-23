@@ -37,6 +37,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { firstUsableStation, mergeStationDaily } from './stations.mjs';
+import { pipelineVersion } from './pipeline-version.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -139,6 +140,10 @@ try {
 
 const out = {
   generated: new Date().toISOString(),
+  /* Which build of the pipeline produced these numbers. A later check compares
+     it against the code on disk, so a snapshot that predates a fix cannot be
+     mistaken for one that includes it. */
+  pipeline: pipelineVersion(),
   source: 'Open-Meteo — ECMWF ERA5 reanalysis (archive) and marine model (sea-surface temperature)',
   note: 'Precomputed by scripts/build-climate.mjs so the dashboard makes no archive requests at page load.',
   periods: cfg.PERIODS,

@@ -9,6 +9,7 @@
    Run: node test/spot-check.mjs        (skips cleanly if the data is absent)
    =========================================================================== */
 import fs from 'fs'; import path from 'path';
+import { stalenessOf } from '../scripts/pipeline-version.mjs';
 import { fileURLToPath } from 'url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.join(ROOT, 'data', 'climate.json');
@@ -53,6 +54,15 @@ if (fs.existsSync(VAL)) {
 
 console.log('\n\x1b[1mdata/climate.json\x1b[0m');
 console.log(`  generated ${j.generated}`);
+/* Is this data even from the current code? Every other check here asks whether
+   the numbers are right; this one asks whether they are the numbers the code
+   would produce today. Twice the answer was no while everything else passed,
+   and the site was wrong in a way no test could see. */
+{
+  const why = stalenessOf(j);
+  ok('the data was built by the current pipeline', why === null, why || '');
+  if (why) console.log('  \x1b[33m→ the figures below are from older code; a rebuild is required\x1b[0m');
+}
 console.log(noaa
   ? `  reference: NOAA station normals ${noaa.window} (data/validation.json)`
   : '  reference: built-in estimates — run scripts/validate-climate.mjs for real NOAA figures');
