@@ -688,9 +688,8 @@ function renderRadarRow(host) {
     </div>`;
   host.appendChild(p);
   if (radarResize) radarResize.disconnect();
-  radarResize = window.ResizeObserver
-    ? new ResizeObserver(es => es.forEach(e => refitRadarThumb(e.target)))
-    : null;
+  radarBoxes = [];
+  radarResize = window.ResizeObserver ? new ResizeObserver(() => refitRadarRow()) : null;
   p.querySelectorAll('.js-rr-slot').forEach(slot =>
     mountRadarThumb(slot, loc(slot.dataset.loc)));
   return p;
@@ -723,24 +722,41 @@ function ridgePoint(st, l) {
   };
 }
 
-/* How far a house misses the middle of a square by, in image pixels — 0 when
-   the crop can be centred on it outright. This is the clamp in
-   frameRadarThumb() asked as a question about a station rather than applied to
-   one, so the two cannot disagree.
+/* Never wider than this: the loop carries a broad empty margin around the
+   sweep, and 1.16 is the zoom that trims it off — what the row used to be fixed
+   at. Never tighter than the cap either, which is a guard rather than a limit
+   anything reaches: it stops one badly placed home from zooming the row down to
+   a postage stamp. */
+const RIDGE_ZOOM = { min: 1.16, max: 3 };
 
-   Measured against the row at its usual desktop size rather than at whatever
-   the window happens to be right now, because the answer picks a station, and
-   that has to be a stable choice: the id is captioned on the square and the
-   modal links to it. A caption that changed as you dragged the window would be
-   worse than a slightly worse crop. */
-const RIDGE_NOMINAL = { halfW: 259, halfH: 107 };
+/* The row's usual desktop shape, used only to choose stations. That choice has
+   to be stable — the id is captioned on the square and the modal links to it —
+   so it is settled against a fixed shape rather than against whatever the
+   window happens to be right now. A caption that changed as you dragged the
+   window would be worse than a slightly tighter crop. */
+const RIDGE_NOMINAL_RATIO = 169 / 408;
 
-function radarMiss(site, l) {
-  const pt = ridgePoint(site, l);
-  const { halfW, halfH } = RIDGE_NOMINAL;
-  return Math.hypot(
-    Math.max(0, halfW - pt.x, pt.x - (RIDGE.w - halfW)),
-    Math.max(0, (RIDGE.mapTop + halfH) - pt.y, pt.y - (RIDGE.mapBottom - halfH)));
+/* How far a square has to zoom in before the house can sit in its middle.
+
+   Panning alone cannot do it: the crop is a window on a 600x550 image, and once
+   the house is closer to an edge than half the window is wide, centring it
+   would run off the picture. Zooming shrinks the window until it fits. The two
+   axes are asked separately and the tighter one wins, because the window is
+   wide and short — it has room to pan a degree north or south and barely a
+   quarter of one east or west. */
+function radarZoomNeeded(pt, ratio) {
+  if (!pt) return RIDGE_ZOOM.min;
+  const roomX = Math.min(pt.x, RIDGE.w - pt.x);
+  const roomY = Math.min(pt.y - RIDGE.mapTop, RIDGE.mapBottom - pt.y);
+  return Math.max(roomX > 0 ? (RIDGE.w / 2) / roomX : Infinity,
+                  roomY > 0 ? (RIDGE.w / 2) * ratio / roomY : Infinity);
+}
+
+/* What this station would cost the row, as a zoom. Never below the floor, so
+   that every station able to centre the house comfortably scores the same and
+   the tie falls to distance. */
+function radarSiteZoom(site, l) {
+  return Math.max(RIDGE_ZOOM.min, radarZoomNeeded(ridgePoint(site, l), RIDGE_NOMINAL_RATIO));
 }
 
 /* Rough great-circle distance. Only ever compared against other distances and
@@ -751,9 +767,11 @@ function radarDistanceKm(site, l) {
                     (site.lon - l.lon) * 111.19 * Math.cos((site.lat + l.lat) / 2 * Math.PI / 180));
 }
 
-/* The dish whose image can put this house closest to the middle of the square,
-   out of those close enough to cover it. Ties — two dishes that can both centre
-   the house outright, which is the common case — go to the nearer one, because
+/* The dish that can centre this house for the least zoom, out of those close
+   enough to cover it. Least zoom rather than least distance because the row
+   shares one zoom, so the worst-placed home decides how much of the map all
+   three get to show — a dish five kilometres nearer is worth nothing if it
+   costs the whole row a third of its view. Ties go to the nearer dish, since
    past that the only thing left to prefer is a shorter beam. */
 function pickRadarSite(l) {
   let best = null;
@@ -761,27 +779,54 @@ function pickRadarSite(l) {
     const site = RADAR_SITES[id];
     const km = radarDistanceKm(site, l);
     if (km > RADAR_RANGE_KM) continue;
-    const miss = radarMiss(site, l);
-    if (!best || miss < best.miss - 0.5 || (miss < best.miss + 0.5 && km < best.km))
-      best = { id, miss, km };
+    const zoom = radarSiteZoom(site, l);
+    if (!best || zoom < best.zoom - 0.001 || (zoom < best.zoom + 0.001 && km < best.km))
+      best = { id, zoom, km };
   }
   return best && best.id;
 }
 
-/* Which point each box is framed on, and one observer for the row.
+/* Which point each box is framed on, the row's squares in order, and one
+   observer for the lot.
 
-   A single measurement cannot be trusted: after a viewport change the row is
-   rebuilt before the new width has reached it, and a box measured mid-flow
-   crops to the wrong window and then never corrects itself. Re-measuring on
-   every size change covers that and an ordinary resize alike, without guessing
-   at timing. The observer is rebuilt with the row, so it never holds on to
-   boxes that have been thrown away. */
+   Both the zoom and the pan are derived from the size of the square — a taller
+   square relative to its width needs more zoom to fit the house in, and the pan
+   is measured off the image's laid-out width — so neither can be worked out
+   until the box has a size, and both stop being right the moment it changes.
+   Hence an observer rather than a single measurement at render time. It is
+   rebuilt with the row, so it never holds on to squares that have been thrown
+   away. */
 const RADAR_FRAMES = new WeakMap();
+let radarBoxes = [];
 let radarResize = null;
 
-function refitRadarThumb(box) {
-  const f = RADAR_FRAMES.get(box);
-  if (f) frameRadarThumb(box, f.img, f.pt);
+/* Zoom and frame the whole row together.
+
+   One zoom for all three squares, not one each. The row exists to be read
+   across — three homes, same weather system, at a glance — and that only works
+   if a blob the same size means the same thing in every square. So the row
+   zooms to whatever its worst-placed home needs and the other two follow, even
+   though they would each have been happy wider.
+
+   Today that worst home is Bonita Springs, and it costs the row about a third
+   of its reach: the Gulf coast has no dish at its longitude, so the nearest one
+   that can frame it at all sits up at Tampa with the house low in the picture.
+   Rockaway would have settled for 1.05 and North Myrtle Beach for 1.13. */
+function refitRadarRow() {
+  const boxes = radarBoxes.filter(b => b.isConnected && b.clientWidth > 0 && RADAR_FRAMES.has(b));
+  if (!boxes.length) return;
+
+  let zoom = RIDGE_ZOOM.min;
+  for (const b of boxes) {
+    zoom = Math.max(zoom, radarZoomNeeded(RADAR_FRAMES.get(b).pt, b.clientHeight / b.clientWidth));
+  }
+  zoom = Math.min(zoom, RIDGE_ZOOM.max);
+
+  for (const b of boxes) {
+    const f = RADAR_FRAMES.get(b);
+    f.img.style.width = (zoom * 100).toFixed(2) + '%';
+    frameRadarThumb(b, f.img, f.pt);
+  }
 }
 
 /* Pan the thumbnail so the house sits in the middle of the box.
@@ -835,9 +880,12 @@ function mountRadarThumb(slot, l) {
     /* Crop around the house rather than around the dish. */
     const btn = slot.querySelector('.ov-radar-btn');
     RADAR_FRAMES.set(btn, { img, pt: ridgePoint(st, l) });
-    refitRadarThumb(btn);
+    radarBoxes.push(btn);
+    /* Re-run for the whole row, not just this square: the zoom is shared, so a
+       home arriving can widen or tighten the two already on screen. */
+    refitRadarRow();
     if (radarResize) radarResize.observe(btn);
-    else requestAnimationFrame(() => refitRadarThumb(btn));
+    else requestAnimationFrame(refitRadarRow);
     img.addEventListener('error', () => { slot.innerHTML = `<div class="ov-radar-ph">radar<br>offline</div>`; });
     /* The whole card is a button that opens the home. Without this the radar
        would navigate away instead of enlarging. */
