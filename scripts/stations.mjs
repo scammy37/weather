@@ -6,36 +6,63 @@
    ERA5 is a model. For monthly AVERAGES it is close enough — within a degree
    or two. For THRESHOLD counts it is not close at all, because a threshold
    turns a small bias into a large error whenever the threshold sits inside the
-   bulk of the distribution. Measured over 2016–2025 against the station
-   records, days per year at or above 90°F:
+   bulk of the distribution. Measured over 2016-2025, days per year at or above
+   90°F, with each station's distance from the house:
 
-     Rockaway NJ           era5 14    Caldwell 30, Newark 35
-     North Myrtle Beach    era5 24    Grand Strand 19
-     Bonita Springs FL     era5 13    Naples 123, Fort Myers 144
+     Bonita Springs FL   era5  13    Naples 13 mi 123, Fort Myers 18 mi 144
+     North Myrtle Beach  era5  24    Grand Strand 2 mi 19
+     Rockaway NJ         era5  14    Boonton 6 mi 19, Caldwell 12 mi 30
 
-   Two of three homes wrong, one of them by a factor of nine. It was only
-   noticed at Bonita because Florida fell below New Jersey; Rockaway's 14 looks
-   perfectly plausible and is half the real figure.
+   Bonita is the case that proves it: the model says 13 and the thermometer
+   says 123, a factor of nine, because a 3°F bias moves an average barely and a
+   threshold enormously. No other model fixes it — era5_land, era5_ensemble and
+   ecmwf_ifs all read colder still.
 
-   Bonita's row read "Naples 80" until 2026-08. It was never Naples: the id in
-   the table below was USW00012895, which is Fort Pierce, 118 miles away on the
-   Atlantic coast. Naples itself reads 123. The correction makes the case here
-   stronger, not weaker, and it is the reason the table now carries each
-   station's coordinates to be checked against.
-
-   No other model fixes it — era5_land, era5_ensemble and ecmwf_ifs all read
-   COLDER still. Moving the query point inland fixes Bonita (13 → 109) and
-   ruins North Myrtle Beach (24 → 3), so it is a coincidence rather than a fix.
+   Rockaway's row is worth reading carefully, because this file used to claim
+   the model was wrong there by half and it was not. The 30 it was compared
+   against came from a station 21 miles away and 440 ft lower. Hot days fall
+   off steeply with elevation here — Newark at 6 ft counts 35, Caldwell at
+   171 ft 30, Boonton at 280 ft 19, and Aeroflex-Andover, the only station at
+   this house's own 538 ft, counts 14. At Rockaway the model was about right
+   and the station was in the wrong place.
 
    What is right everywhere is the thermometer, because it is the measurement
-   rather than a model of it — and it is the same record the published figures
-   for these towns are computed from. So temperature, precipitation and snow
-   come from the nearest reporting station; everything a station has no
-   instrument for (cloud cover, sunshine, radiation, humidity, the ocean) stays
-   with the reanalysis, which is the right tool for a field rather than a point.
+   rather than a model of it. So temperature, precipitation and snow come from
+   real stations; everything a station has no instrument for (cloud cover,
+   sunshine, radiation, humidity, the ocean) stays with the reanalysis, which
+   is the right tool for a field rather than a point.
 
-   The cost is honest and stated on the page: a station is a specific place a
-   few miles from the house, not the back garden.
+   Which station, per field, per day
+   --------------------------------
+   Not "the nearest station" — the nearest station THAT MEASURED THIS FIELD ON
+   THIS DAY. The three things a house wants measured are not measured in the
+   same places:
+
+     - Thermometers are rare. The nearest to Rockaway is 6 miles away.
+     - Rain gauges are everywhere. Three sit within 4.4 miles of Rockaway,
+       because CoCoRaHS volunteers read a gauge in the garden every morning.
+     - Distance matters far more for rain than for temperature, and most of
+       all for a house 538 ft up. Over 2016-2025, annual precipitation:
+
+         Rockaway   gauges within 4.4 mi   56-59 in     <- the house
+                    Boonton      6.2 mi    52 in
+                    Caldwell    12.2 mi    44 in
+         Bonita     Naples Park  4.3 mi    61 in        <- the house
+                    Naples Muni 12.8 mi    48 in
+
+       Reading Rockaway's rain off an airport 12 miles away understated it by
+       a quarter. That was the largest single error on the page, and choosing
+       a better single station could not have fixed it: the nearest gauge has
+       no thermometer, and the nearest thermometer is six miles from it.
+
+   So each field walks the candidate list independently and takes the first
+   station that filed a report that day. Rockaway ends up with its temperature
+   from Boonton, 6 miles away, and its rain and snow from a gauge 0.2 miles
+   away — which is the honest answer to "what fell on this house".
+
+   The cost is stated on the page: a station is a specific place some distance
+   from the house, not the back garden. The page can now say how far, per
+   measurement, because the answers differ.
    =========================================================================== */
 
 /* Elements a daily-summaries record can carry, mapped onto the names the
@@ -47,62 +74,94 @@ export const STATION_FIELDS = {
   SNOW: 'snowfall_sum'
 };
 
-/* Candidates per home, nearest usable first. Distances are to the house.
-   Airport stations report continuously, which matters: a co-op site that
-   reports five days a week under-counts hot days purely by being closed.
+/* Candidates per home, NEAREST FIRST. Every field walks this one list and
+   takes the first station that reported it, so the order is the whole policy:
+   a nearer station always wins for the days it covers.
 
    `lat`/`lon` are the station's own coordinates, copied from NOAA's
    authoritative list (ghcnd-stations.txt), and `miles` is the distance from
    them to the home's coordinates in js/config.js. They are here to be
-   CHECKED: firstUsableStation compares them against the coordinates NOAA
+   CHECKED: resolveHomeStations compares them against the coordinates NOAA
    returns with the data and refuses a station that is not where this table
    says it is.
 
-   That check exists because two of these six ids were wrong for months and
+   That check exists because two ids in this table were wrong for months and
    nothing could have noticed. A misplaced station does not look broken — it
-   looks perfect. Fort Pierce reported 100% of days for a Bonita Springs that
-   is 118 miles away, so MIN_COVERAGE passed it every single time. Coverage
+   looks perfect. Fort Pierce reported 100% of days for a Bonita Springs 118
+   miles away, so a coverage test passed it every single time. Coverage
    measures whether a station is reporting, never whether it is the right
    station. */
 export const STATIONS = {
   rockaway: [
-    /* Was USW00054785, labelled "Morristown Municipal Airport, 7 mi". That id
-       is Somerset Airport, 21 miles south; GHCN-Daily has no Morristown record
-       at all. Caldwell is the nearest station that clears MIN_COVERAGE on
-       every field it carries — 99.6% of days over 2016–2025, against
-       Somerset's 99.8% from twice the distance, and the two agree on the
-       figure this file exists for (30.2 hot days a year against 30.1) and on
-       annual precipitation to within half a tenth of an inch.
+    /* Three CoCoRaHS gauges before the first thermometer. Between them they
+       cover every one of the 3,653 days of 2016-2025 — the gauge in the next
+       street files 3,294 of them and the other two fill the rest — so the rain
+       and snow on this page are measured within four miles of the house and
+       never fall back to an airport. The three agree closely: 56.3, 55.4 and
+       58.9 inches a year, against Caldwell's 44.4. The highlands are wetter
+       than the Newark basin, and the old figure simply missed it. */
+    { id: 'US1NJMS0006', name: 'Rockaway 0.4 NNW (CoCoRaHS)', miles: 0.2, lat: 40.9018, lon: -74.5189 },
+    { id: 'US1NJMS0071', name: 'Denville 1.5 ESE (CoCoRaHS)', miles: 3, lat: 40.8805, lon: -74.4631 },
+    { id: 'US1NJMS0023', name: 'Mine Hill 0.4 NE (CoCoRaHS)', miles: 4, lat: 40.8821, lon: -74.5944 },
+    /* The nearest thermometer, and a good one: it reported 99.8% of days over
+       the decade, so it is not the "co-op that is closed at weekends" this
+       file used to warn about — that was checked rather than assumed.
 
-       Aeroflex-Andover is nearer at 14 miles and matches the house's elevation
-       far better (580 ft against Caldwell's 171), but it reports precipitation
-       on 85% of days and is thinning — 244 days in 2023 — so it cannot be the
-       primary without manufacturing a drought.
+       It replaces Caldwell, 12 miles away, which replaced USW00054785, an id
+       labelled "Morristown Municipal, 7 mi" that is really Somerset Airport,
+       21 miles south. GHCN-Daily has no Morristown record at all.
 
-       The one figure that does turn on this choice is nights: Caldwell counts
-       94 frost days a year and Somerset 120, from 400 ft below the house.
-       Neither is the back garden, which is what the page says. */
+       Boonton against Caldwell is worth 11 hot days a year — 19 against 30 —
+       and Boonton is the right one for this house: 6 miles instead of 12, and
+       280 ft instead of 171 against the house's 538. See the header for the
+       full elevation ladder.
+
+       Stated because it is a real weakness: Boonton's summer readings step
+       about 1°F cooler from 2021 relative to both Newark and Somerset, which
+       is a station change rather than a climate one, and it depresses the
+       later years. Its 19 is therefore a little low and the truth for the
+       house is probably 19-23 — still far nearer than Caldwell's 30. Andover,
+       at the house's exact elevation, cannot be used at all: it reports rain
+       on 85% of days and is thinning, 244 days in 2023. */
+    { id: 'USC00280907', name: 'Boonton 1 SE, NJ', miles: 6, lat: 40.8917, lon: -74.3964 },
     { id: 'USW00054743', name: 'Caldwell Essex County Airport, NJ', miles: 12, lat: 40.8764, lon: -74.2828 },
-    { id: 'USW00014734', name: 'Newark Liberty International, NJ',  miles: 24, lat: 40.6828, lon: -74.1692 }
+    { id: 'USW00014734', name: 'Newark Liberty International, NJ', miles: 24, lat: 40.6828, lon: -74.1692 }
   ],
   nmb: [
+    /* The best-served of the three: an airport 2.3 miles away that has not
+       missed a day in ten years, so nothing nearer would add anything. It has
+       no snow board, so snowfall — about an inch a year — stays with the
+       model, which is the honest answer rather than a zero. */
     { id: 'USW00093718', name: 'N. Myrtle Beach Grand Strand Airport, SC', miles: 2, lat: 33.8161, lon: -78.7206 },
     /* GHCN calls this one Myrtle Beach AFB; it is the same field as Myrtle
-       Beach International. Its daily record currently starts in 2025, so
-       MIN_COVERAGE skips it for any longer window — which is the guard doing
-       its job, and costs nothing while Grand Strand reports every day. */
-    { id: 'USW00013717', name: 'Myrtle Beach International, SC',           miles: 17, lat: 33.6833, lon: -78.9333 }
+       Beach International. Its daily record currently starts in 2025, so it
+       contributes almost nothing — which costs nothing while Grand Strand
+       reports every day. */
+    { id: 'USW00013717', name: 'Myrtle Beach International, SC', miles: 17, lat: 33.6833, lon: -78.9333 }
   ],
   bonita: [
-    /* Was USW00012895 — Fort Pierce, on the other coast. One transposed digit
-       (12895 for 12897) moved the thermometer 118 miles and swapped the Gulf
-       rainfall regime for the Atlantic one. */
-    { id: 'USW00012897', name: 'Naples Municipal Airport, FL',    miles: 13, lat: 26.1550, lon: -81.7753 },
-    { id: 'USW00012835', name: 'Fort Myers Page Field, FL',       miles: 18, lat: 26.5850, lon: -81.8614 }
+    /* A gauge a third of the distance of the nearest thermometer, and it
+       matters more here than anywhere: Florida rain is convective and local.
+       Naples Park reads 61 inches a year against Naples Muni's 48 over the
+       same months, and the rest of the region agrees with the higher figure —
+       Page Field 58, Fort Myers RSW 55. The airport's heated tipping bucket
+       sits on the coast and undercatches tropical downpours; a volunteer's
+       gauge does not. It covers 3,315 of 3,653 days; Naples fills the rest. */
+    { id: 'US1FLCR0013', name: 'Naples Park 3.7 ENE (CoCoRaHS)', miles: 4, lat: 26.2798, lon: -81.7583 },
+    /* The nearest thermometer. Was USW00012895 — Fort Pierce, on the other
+       coast. One transposed digit (12895 for 12897) moved it 118 miles and
+       swapped the Gulf rainfall regime for the Atlantic one. */
+    { id: 'USW00012897', name: 'Naples Municipal Airport, FL', miles: 13, lat: 26.1550, lon: -81.7753 },
+    { id: 'USW00012894', name: 'Fort Myers SW Florida Regional, FL', miles: 14, lat: 26.5381, lon: -81.7567 },
+    { id: 'USW00012835', name: 'Fort Myers Page Field, FL', miles: 18, lat: 26.5850, lon: -81.8614 }
   ]
 };
 
-const MIN_COVERAGE = 0.9;   // a station with real gaps under-counts everything
+/* A field is taken from observations only if the observations actually cover
+   it. Below this the series has real holes, and holes deflate every total
+   computed from them — a quiet drought, or a winter with less snow than fell.
+   Such a field goes back to the model, which is at least complete. */
+const MIN_COVERAGE = 0.9;
 
 /* How far the coordinates NOAA returns may sit from the ones in the table
    before the id is treated as naming a different place. Station coordinates
@@ -117,6 +176,11 @@ const MISPLACED_MI = 2;
    for Bonita Springs. Real snow days at Newark reach a minimum of 36°F, so the
    threshold sits well clear of anything genuine. */
 const SNOW_IMPOSSIBLE_ABOVE_F = 40;
+
+/* On a day a station filed a report, a blank rain or snow figure means none
+   fell — GHCN omits the zeros. A blank TEMPERATURE means no reading, which is
+   a different thing entirely and has to fall through to the next station. */
+const ZERO_WHEN_BLANK = ['precipitation_sum', 'snowfall_sum'];
 
 /* Great-circle miles. Only used to ask whether a station is where the table
    says it is, so the spherical earth is plenty. */
@@ -152,9 +216,8 @@ export async function fetchStationDaily(stationId, start, end) {
   for (const r of rows) {
     if (r.NAME) name = r.NAME;
     if (lat == null) {
-      /* parseFloat rather than unary +, which turns an empty field into 0 —
-         a coordinate off West Africa that would reject a perfectly good
-         station. */
+      /* parseFloat rather than unary +, which turns an empty field into 0 — a
+         coordinate off West Africa that would reject a good station. */
       const y = parseFloat(r.LATITUDE), x = parseFloat(r.LONGITUDE);
       if (Number.isFinite(y) && Number.isFinite(x)) { lat = y; lon = x; }
     }
@@ -162,9 +225,9 @@ export async function fetchStationDaily(stationId, start, end) {
     for (const [el, key] of Object.entries(STATION_FIELDS)) rec[key] = num(r[el]);
     /* A reading can be wrong as well as absent, and one impossible day is
        enough to publish a wrong annual figure. Snow needs the day to have been
-       cold at some point; if it never was, the figure is a keying error, not a
-       measurement. Dropped rather than zeroed, so it reads as "not measured"
-       and never as "measured none". */
+       cold at some point; if it never was, the figure is a keying error rather
+       than a measurement. Dropped rather than zeroed, so it reads as "not
+       measured" and never as "measured none". */
     if (rec.snowfall_sum > 0 && rec.temperature_2m_min != null
         && rec.temperature_2m_min > SNOW_IMPOSSIBLE_ABOVE_F) {
       snowRejected.push({ date: r.DATE, snow: rec.snowfall_sum, low: rec.temperature_2m_min });
@@ -188,81 +251,130 @@ export async function fetchStationDaily(stationId, start, end) {
            days: byDate.size, seen, reports, snowRejected };
 }
 
-/* The first candidate that actually reports, from the place it claims to be.
-   A station that has gone quiet, or that turns out to be somewhere else
-   entirely, is reported and skipped rather than silently halving the day
-   counts or moving the house to another state. */
-export async function firstUsableStation(homeId, start, end, log = () => {}) {
+/* Build one observed series per field, each day taken from the nearest station
+   that filed a report that day and measures that field.
+
+   Walking the list rather than stopping at the first station is the point: the
+   first has a thermometer or a gauge, rarely both, and never a complete
+   record. Fetching stops as soon as every field is full, so the usual cost is
+   three or four requests rather than the whole list.
+
+   Known limitation, and the reason the default period is the recent decade:
+   the CoCoRaHS gauges only start around 2008-2014. Over a 30-year window the
+   older years therefore come from the airport or the co-op and the later ones
+   from the gauge next door, and those sites do not measure the same rainfall —
+   the Rockaway gauge catches a quarter more than Caldwell. The chain still
+   fills every day, but a 1991-2020 rainfall normal built this way is a blend
+   of two sites rather than one long homogeneous record. The temperature does
+   not have this problem: Boonton has reported since 1892. */
+export async function resolveHomeStations(homeId, start, end, log = () => {}) {
+  const want = Object.values(STATION_FIELDS);
+  const expected = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
+  const series = Object.fromEntries(want.map(k => [k, new Map()]));
+  const sources = [];
+
   for (const cand of STATIONS[homeId] || []) {
+    if (want.every(k => series[k].size >= expected)) break;   // nothing left to fill
+    let s;
     try {
-      const s = await fetchStationDaily(cand.id, start, end);
-      /* Is this id the station the table thinks it is? Checked before coverage
-         because a station in the wrong place has no coverage problem — that is
-         precisely what made the wrong ids invisible. */
-      if (cand.lat != null && s.lat != null) {
-        const off = milesBetween(cand.lat, cand.lon, s.lat, s.lon);
-        if (off > MISPLACED_MI) {
-          log(`  station ${cand.id} skipped — NOAA places it ${off.toFixed(1)} mi from where this`
-            + ` table says ${cand.name} is; the id names ${s.name}. Fix the id, do not use it.`);
-          continue;
-        }
-      } else if (cand.lat != null) {
-        log(`  station ${cand.id} — NOAA returned no coordinates, so its position is unverified`);
-      }
-      if (s.coverage < MIN_COVERAGE) {
-        log(`  station ${cand.id} skipped — only ${Math.round(s.coverage * 100)}% of days reported`);
-        continue;
-      }
-      log(`  station ${cand.id} — ${cand.name}, ${Math.round(s.coverage * 100)}% of days, ${cand.miles} mi from the house`);
-      if (s.snowRejected && s.snowRejected.length) {
-        for (const b of s.snowRejected) {
-          log(`  discarded an impossible reading: ${b.snow} in of snow on ${b.date}, low ${b.low}°F`);
-        }
-      }
-      return { ...s, label: cand.name, miles: cand.miles };
+      s = await fetchStationDaily(cand.id, start, end);
     } catch (err) {
       log(`  station ${cand.id} unusable (${err.message})`);
+      continue;
     }
+    /* Is this id the station the table thinks it is? Asked before anything is
+       taken from it, because a station in the wrong place has no coverage
+       problem — which is precisely what made the wrong ids invisible. */
+    if (cand.lat != null && s.lat != null) {
+      const off = milesBetween(cand.lat, cand.lon, s.lat, s.lon);
+      if (off > MISPLACED_MI) {
+        log(`  station ${cand.id} skipped — NOAA places it ${off.toFixed(1)} mi from where this`
+          + ` table says ${cand.name} is; the id names ${s.name}. Fix the id, do not use it.`);
+        continue;
+      }
+    } else if (cand.lat != null) {
+      log(`  station ${cand.id} — NOAA returned no coordinates, so its position is unverified`);
+    }
+    for (const b of s.snowRejected || []) {
+      log(`  ${cand.id}: discarded an impossible reading — ${b.snow} in of snow on ${b.date}, low ${b.low}°F`);
+    }
+
+    const took = {};
+    for (const [date, rec] of s.byDate) {
+      for (const k of want) {
+        if (!s.reports[k] || series[k].has(date)) continue;
+        let v = rec[k];
+        if (v == null) {
+          if (!ZERO_WHEN_BLANK.includes(k)) continue;   // no reading: try the next station
+          v = 0;                                        // it reported, so none fell
+        }
+        series[k].set(date, v);
+        took[k] = (took[k] || 0) + 1;
+      }
+    }
+    if (!Object.keys(took).length) {
+      log(`  station ${cand.id} — ${cand.name}, nothing left for it to add`);
+      continue;
+    }
+    sources.push({ id: cand.id, name: cand.name, miles: cand.miles,
+                   fields: Object.keys(took), days: took });
+    log(`  station ${cand.id} — ${cand.name}, ${cand.miles} mi: `
+      + Object.entries(took).map(([k, n]) => `${k} ${n}`).join(', '));
   }
-  return null;
+
+  /* A field with real holes deflates every total computed from it, so it goes
+     back to the model rather than being published with gaps. */
+  const fields = [], thin = [];
+  for (const k of want) {
+    if (!series[k].size) continue;
+    if (series[k].size / expected < MIN_COVERAGE) {
+      thin.push(`${k} ${Math.round(series[k].size / expected * 100)}%`);
+      series[k] = new Map();
+      continue;
+    }
+    fields.push(k);
+  }
+  if (thin.length) log(`  left on the model, too few days observed: ${thin.join(', ')}`);
+  if (!fields.length) {
+    log('  no usable observations — everything stays on the model');
+    return null;
+  }
+
+  /* The station a one-line disclosure should name: the one the temperature
+     came from, which is the figure a reader is most likely to check. */
+  const primary = sources.find(s => s.days.temperature_2m_max) || sources[0];
+  return {
+    homeId, series, sources, fields, expected,
+    coverage: (series.temperature_2m_max.size || 0) / expected,
+    stationId: primary.id, label: primary.name, miles: primary.miles
+  };
 }
 
 /* Overwrite the model's temperature, precipitation and snow with what the
-   station recorded, day by day, leaving every other variable untouched.
+   stations recorded, day by day, leaving every other variable untouched.
 
-   Days the station missed become null rather than falling back to the model:
+   Days no station covered become null rather than falling back to the model:
    a series that is observation on most days and model on the rest would carry
    the model's cool bias on exactly the days nobody can see, and the whole
    point here is threshold counts. The aggregation already reports nulls as
    missing rather than as zero. */
 export function mergeStationDaily(daily, station) {
-  if (!daily || !daily.time || !station) return { replaced: 0, missing: 0, fields: [], kept: [] };
+  if (!daily || !daily.time || !station || !station.series) {
+    return { replaced: 0, missing: 0, fields: [], kept: [] };
+  }
   const all = Object.values(STATION_FIELDS).filter(k => Array.isArray(daily[k]));
-  const reports = station.reports || {};
-  /* Only take over the fields this station instruments. Replacing a complete
-     model series with a station's blanks is not an improvement, it is deletion:
-     it published a Rockaway with no snowfall at all, which is the same defect
-     ERA5-Land caused for precipitation and it went in the same way, by assuming
-     an absent value meant something. */
-  const keys = all.filter(k => k.startsWith('temperature') || reports[k]);
+  const keys = all.filter(k => station.series[k] && station.series[k].size);
   const kept = all.filter(k => !keys.includes(k));
 
-  /* On a day the station reported at all, a blank rain or snow figure means
-     none fell — GHCN omits the zeros. That inference is only safe for a field
-     the station is known to measure, which `keys` already guarantees. */
-  const ZERO_WHEN_BLANK = ['precipitation_sum', 'snowfall_sum'];
   let replaced = 0, missing = 0;
   daily.time.forEach((t, i) => {
-    const rec = station.byDate.get(t);
-    if (!rec || rec.temperature_2m_max == null) {
-      for (const k of keys) daily[k][i] = null;
-      missing++;
-      return;
-    }
+    let holes = 0;
     for (const k of keys) {
-      daily[k][i] = rec[k] != null ? rec[k] : (ZERO_WHEN_BLANK.includes(k) ? 0 : null);
+      const v = station.series[k].get(t);
+      if (v === undefined) { daily[k][i] = null; holes++; }
+      else daily[k][i] = v;
     }
-    replaced++;
+    if (holes) missing++; else replaced++;
   });
   return { replaced, missing, fields: keys, kept };
 }

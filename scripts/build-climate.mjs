@@ -36,7 +36,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { firstUsableStation, mergeStationDaily } from './stations.mjs';
+import { resolveHomeStations, mergeStationDaily } from './stations.mjs';
 import { pipelineVersion } from './pipeline-version.mjs';
 
 const require = createRequire(import.meta.url);
@@ -200,19 +200,27 @@ for (const loc of homes) {
       const P = cfg.PERIODS[period];
       let stationInfo = null;
       try {
-        const st = await firstUsableStation(loc.id, P.start, P.end, log);
+        const st = await resolveHomeStations(loc.id, P.start, P.end, log);
         if (st) {
           const merged = mergeStationDaily(arch.daily, st);
           stationInfo = {
-            id: st.stationId, name: st.label || st.name, miles: st.miles,
+            /* id/name/miles describe the station the TEMPERATURE came from, so
+               anything that shows one station still shows the right one. */
+            id: st.stationId, name: st.label, miles: st.miles,
             coverage: +st.coverage.toFixed(3),
             daysObserved: merged.replaced, daysMissing: merged.missing,
-            fields: merged.fields, keptOnModel: merged.kept
+            fields: merged.fields, keptOnModel: merged.kept,
+            /* Which station supplied which field, and for how many days. Rain
+               and temperature usually come from different places — that is the
+               point of resolving per field — so a single id would misdescribe
+               most of the numbers on the page. */
+            sources: st.sources.map(x => ({ id: x.id, name: x.name, miles: x.miles,
+                                            fields: x.fields, days: x.days }))
           };
-          log(`  observations: ${merged.replaced.toLocaleString()} days from ${st.stationId}`
-            + `, ${merged.missing.toLocaleString()} without a reading`);
-          log(`  from the station: ${merged.fields.join(', ')}`);
-          if (merged.kept.length) log(`  left on the model (station has no gauge): ${merged.kept.join(', ')}`);
+          log(`  observations: ${merged.replaced.toLocaleString()} days complete`
+            + `, ${merged.missing.toLocaleString()} with a gap in some field`);
+          log(`  from stations: ${merged.fields.join(', ')}`);
+          if (merged.kept.length) log(`  left on the model (nothing measures it here): ${merged.kept.join(', ')}`);
         } else {
           log(`  no usable station — temperature and precipitation stay on the model`);
         }
@@ -244,7 +252,9 @@ for (const loc of homes) {
       log(`  ok — ${days.toLocaleString()} days, model ${arch.model}, extended ${arch.extended}, ${set.years.length} yearly rows`);
       /* Print the numbers most likely to expose a grid-resolution problem, so
          a bad model shows up in the run log rather than only on the page. */
-      log(`     source: ${stationInfo ? `station ${stationInfo.id} for temperature/precip/snow` : 'model only'}`);
+      log(`     source: ${stationInfo
+        ? stationInfo.sources.map(x => `${x.id} @${x.miles}mi ${x.fields.map(f => f.split('_')[0]).join('/')}`).join(' · ')
+        : 'model only'}`);
       log(`     July high ${rows[6].avgHigh.toFixed(1)}°F · days ≥90°F/yr ${Math.round(set.annual.annualHot90)}`
         + ` · Jan low ${rows[0].avgLow.toFixed(1)}°F · annual precip ${set.annual.annualPrecip.toFixed(1)} in`);
       if (arch.modelNote && arch.modelNote !== arch.model) log(`     note: ${arch.modelNote}`);

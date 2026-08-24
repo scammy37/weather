@@ -1055,16 +1055,43 @@ function sourceNote() {
   const st = c && c.meta && c.meta.station;
   if (!st) return '';
   const pct = Math.round((st.coverage || 0) * 100);
+  /* Which station supplied which measurement. They are usually not the same
+     one: thermometers are rare and rain gauges are everywhere, so the rain on
+     this page is often measured miles nearer the house than the temperature.
+     Naming a single station would misdescribe most of the figures. */
+  const src = f => {
+    const all = (st.sources || []).filter(x => x.fields && x.fields.includes(f));
+    if (!all.length) return null;
+    return all.slice().sort((a, b) => (b.days[f] || 0) - (a.days[f] || 0))[0];
+  };
+  const where = x => `station ${esc(x.id)} — ${esc(x.name)}, ${esc(String(x.miles))} `
+    + `mile${x.miles === 1 ? '' : 's'} away`;
+  const temp = src('temperature_2m_max');
+  const rain = src('precipitation_sum');
+  const snow = src('snowfall_sum');
+  let lines;
+  if (temp && rain) {
+    const same = rain.id === temp.id;
+    lines = `The thermometer is ${where(temp)}, and it reported on
+      ${esc(String(pct))}% of days in this period.
+      ${same ? 'Rain and snow come from the same station.'
+             : `Rain${snow && snow.id === rain.id ? ' and snow' : ''} come from
+                ${where(rain)} — a gauge read by hand every morning, which is why
+                it can sit closer to the house than any thermometer.`}`;
+  } else {
+    /* Older snapshots recorded a single station and no breakdown. */
+    lines = `They come from NOAA station ${esc(st.id)} — ${esc(st.name)}, about
+      ${esc(String(st.miles))} miles from the house — which reported on
+      ${esc(String(pct))}% of days in this period.`;
+  }
   return `<div class="banner info"><span class="bico">🌡️</span><div>
     <b>Temperature, rain and snow are measured, not modelled.</b>
-    They come from NOAA station ${esc(st.id)} — ${esc(st.name)}, about
-    ${esc(String(st.miles))} miles from the house — which reported on
-    ${esc(String(pct))}% of days in this period.
+    ${lines}
     Cloud cover, sunshine, humidity and the ocean have no thermometer to read,
     so those stay with the ERA5 reanalysis.
     <br><span style="color:var(--muted)">The model is close on monthly averages but
     not on day counts: over this window it put Bonita Springs at 13 days a year
-    at or above 90°F against a measured 80, because a 3°F bias moves an average
+    at or above 90°F against a measured 123, because a 3°F bias moves an average
     barely and a threshold enormously.</span></div></div>`;
 }
 

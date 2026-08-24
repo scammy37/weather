@@ -32,17 +32,25 @@ const j = JSON.parse(fs.readFileSync(DATA, 'utf8'));
    for North Myrtle Beach when the NOAA station normal is 87.4°F. That is why
    the real NOAA figures below take precedence whenever they are available —
    a check whose reference values are remembered rather than fetched is not a
-   check, it is a second opinion from the same source. */
+   check, it is a second opinion from the same source.
+
+   The rainfall bands are wider than a published normal, deliberately. Rain now
+   comes from the nearest gauge rather than the nearest airport — 0.2 miles
+   from the Rockaway house rather than 12 — and a hand-read gauge in the
+   highlands measures a quarter more rain than a tipping bucket in the Newark
+   basin: 57 inches a year against 44. Both are correct about where they stand.
+   These bands are meant to catch a unit slip or a station in the wrong state,
+   not to hold the figure to whichever site was used last year. */
 const REF = {
   nmb: { name: 'North Myrtle Beach, SC', station: 'Myrtle Beach area',
     julHigh: [86, 92], janHigh: [52, 60], janLow: [33, 42], julLow: [70, 78],
     precip: [45, 65], snow: [0, 4], freeze: [0, 35], hot90: [8, 40], oceanAug: [78, 87] },
-  bonita: { name: 'Bonita Springs, FL', station: 'Naples / Fort Myers',
+  bonita: { name: 'Bonita Springs, FL', station: 'Naples, rain from 4 mi away',
     julHigh: [89, 95], janHigh: [72, 79], janLow: [50, 60], julLow: [72, 78],
-    precip: [45, 62], snow: [0, 0.1], freeze: [0, 3], hot90: [55, 160], oceanAug: [84, 91] },
-  rockaway: { name: 'Rockaway, NJ', station: 'Caldwell / Newark',
-    julHigh: [80, 88], janHigh: [34, 42], janLow: [15, 26], julLow: [60, 68],
-    precip: [40, 58], snow: [12, 48], freeze: [80, 135], hot90: [15, 50], oceanAug: [68, 76] }
+    precip: [45, 70], snow: [0, 0.1], freeze: [0, 3], hot90: [55, 160], oceanAug: [84, 91] },
+  rockaway: { name: 'Rockaway, NJ', station: 'Boonton, rain from 0.2 mi away',
+    julHigh: [80, 90], janHigh: [34, 42], janLow: [15, 26], julLow: [60, 68],
+    precip: [45, 70], snow: [12, 48], freeze: [80, 135], hot90: [12, 50], oceanAug: [68, 76] }
 };
 
 /* Real NOAA station normals, produced by scripts/validate-climate.mjs. */

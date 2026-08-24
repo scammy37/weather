@@ -66,8 +66,11 @@ const STATIONS = {
      against the co-op record and changing which station it names is a
      separate decision from fixing an id that pointed at the wrong state. */
   nmb:      ['USW00013717', 'USC00386153', 'USW00093718'],   // Myrtle Beach area
-  bonita:   ['USW00012897', 'USW00012835'],                  // Naples / Fort Myers
-  rockaway: ['USW00054743', 'USW00054785', 'USW00014734']    // Caldwell / Somerset / Newark
+  bonita:   ['USW00012897', 'USW00012894', 'USW00012835'],   // Naples / Fort Myers
+  /* Boonton first, because it is the station the published temperatures are
+     now taken from — comparing the model against a different site than the one
+     the page reports would measure the wrong gap. */
+  rockaway: ['USC00280907', 'USW00054743', 'USW00014734']    // Boonton / Caldwell / Newark
 };
 
 /* --- NOAA NCEI monthly normals ------------------------------------------ */
