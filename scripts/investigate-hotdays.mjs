@@ -53,8 +53,8 @@ const F = (v, d = 1) => v == null ? '   —' : v.toFixed(d).padStart(6);
    the published "days above 90" figures are themselves computed from. */
 const STATIONS = {
   nmb:      ['USW00013717', 'USW00093718'],
-  bonita:   ['USW00012895', 'USW00012835'],
-  rockaway: ['USW00054785', 'USW00014734']
+  bonita:   ['USW00012897', 'USW00012835'],
+  rockaway: ['USW00054743', 'USW00014734']
 };
 
 /* --- source 1: real thermometers ---------------------------------------- */

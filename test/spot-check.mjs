@@ -40,7 +40,7 @@ const REF = {
   bonita: { name: 'Bonita Springs, FL', station: 'Naples / Fort Myers',
     julHigh: [89, 95], janHigh: [72, 79], janLow: [50, 60], julLow: [72, 78],
     precip: [45, 62], snow: [0, 0.1], freeze: [0, 3], hot90: [55, 160], oceanAug: [84, 91] },
-  rockaway: { name: 'Rockaway, NJ', station: 'Morristown area',
+  rockaway: { name: 'Rockaway, NJ', station: 'Caldwell / Newark',
     julHigh: [80, 88], janHigh: [34, 42], janLow: [15, 26], julLow: [60, 68],
     precip: [40, 58], snow: [12, 48], freeze: [80, 135], hot90: [15, 50], oceanAug: [68, 76] }
 };

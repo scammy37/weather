@@ -48,11 +48,26 @@ const log = (...m) => console.log(...m);
 
 /* Candidate NOAA stations per home, nearest first. The script uses the first
    that actually returns normals and reports which, so a wrong guess shows up
-   in the output instead of silently skewing the comparison. */
+   in the output instead of silently skewing the comparison.
+
+   "Shows up in the output" is weaker than it sounds, which is why this list
+   was wrong in three places until 2026-08: bonita led with Fort Pierce, 118
+   miles away on the Atlantic coast, and fell back to Fort Lauderdale, also on
+   the wrong coast; rockaway fell back to Moorestown, 68 miles south and named
+   one letter away from the Morristown someone meant. A validation station in
+   the wrong climate does not produce an obvious error — it produces a model
+   bias figure that is quietly about somewhere else. Every id here is now the
+   one used for the observations in scripts/stations.mjs, whose coordinates are
+   checked against NOAA's at build time. */
 const STATIONS = {
+  /* Myrtle Beach AFB carries no 1991-2020 normals, so this falls through to
+     the co-op site 9 miles inland; Grand Strand, 2 miles away, does carry
+     them. Left in that order deliberately — the published comparison is
+     against the co-op record and changing which station it names is a
+     separate decision from fixing an id that pointed at the wrong state. */
   nmb:      ['USW00013717', 'USC00386153', 'USW00093718'],   // Myrtle Beach area
-  bonita:   ['USW00012895', 'USW00012835', 'USW00012849'],   // Naples / Fort Myers
-  rockaway: ['USW00054785', 'USC00285728', 'USW00014734']    // Morristown / Newark
+  bonita:   ['USW00012897', 'USW00012835'],                  // Naples / Fort Myers
+  rockaway: ['USW00054743', 'USW00054785', 'USW00014734']    // Caldwell / Somerset / Newark
 };
 
 /* --- NOAA NCEI monthly normals ------------------------------------------ */

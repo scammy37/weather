@@ -34,10 +34,15 @@ const log = (...m) => console.log(...m);
    all of them and seeing what comes back is the inventory. */
 const WANT = ['TMAX', 'TMIN', 'TAVG', 'PRCP', 'SNOW', 'SNWD', 'AWND', 'WSF2', 'WSF5', 'WDF2', 'TSUN', 'PSUN'];
 
+/* Ids corrected 2026-08: rockaway led with USW00054785, which is Somerset
+   and not the Morristown it was labelled, and bonita with USW00012895, which
+   is Fort Pierce on the other coast. The third Rockaway slot was Moorestown,
+   68 miles south; it is now the CoCoRaHS gauge 0.2 miles from the house,
+   which is the only nearby site with a snow board. */
 const STATIONS = {
-  rockaway: ['USW00054785', 'USW00014734', 'USC00285728'],
+  rockaway: ['USW00054743', 'USW00014734', 'US1NJMS0006'],
   nmb:      ['USW00093718', 'USW00013717', 'USC00386153'],
-  bonita:   ['USW00012895', 'USW00012835', 'USC00080611']
+  bonita:   ['USW00012897', 'USW00012835', 'USC00080611']
 };
 
 async function daily(stationId) {

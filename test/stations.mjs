@@ -1,6 +1,12 @@
 /* Station-observation merge. Run: node test/stations.mjs */
+import path from 'path';
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
 import { STATIONS, STATION_FIELDS, mergeStationDaily, firstUsableStation,
-         fetchStationDaily } from '../scripts/stations.mjs';
+         fetchStationDaily, milesBetween } from '../scripts/stations.mjs';
+const require = createRequire(import.meta.url);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { LOCATIONS } = require(path.join(ROOT, 'js/config.js'));
 let pass = 0, fail = 0;
 const ok = (n, c, e = '') => { if (c) { pass++; console.log('  \x1b[32m✓\x1b[0m ' + n); }
   else { fail++; console.log('  \x1b[31m✗\x1b[0m ' + n + (e ? '  → ' + e : '')); } };
@@ -13,7 +19,27 @@ for (const id of ['rockaway', 'nmb', 'bonita']) {
      STATIONS[id].map(s => s.miles).join(', '));
   ok(`${id} every candidate names a distance from the house`,
      STATIONS[id].every(s => Number.isFinite(s.miles) && s.miles > 0 && s.name));
+  /* The stated distance has to be the distance to THIS home. Both wrong ids
+     carried a plausible mileage belonging to a station somewhere else —
+     Bonita's read 12 while its id sat 118 miles away — so the number and the
+     coordinates are now checked against each other and against js/config.js. */
+  const home = LOCATIONS.find(l => l.id === id);
+  ok(`${id} every candidate carries the station's own coordinates`,
+     STATIONS[id].every(s => Number.isFinite(s.lat) && Number.isFinite(s.lon)));
+  ok(`${id} the stated miles match those coordinates`,
+     STATIONS[id].every(s => Math.abs(milesBetween(home.lat, home.lon, s.lat, s.lon) - s.miles) <= 1),
+     STATIONS[id].map(s => `${s.id} says ${s.miles}, is `
+       + `${milesBetween(home.lat, home.lon, s.lat, s.lon).toFixed(1)}`).join('; '));
 }
+
+console.log(`\n\x1b[1mmeasuring the distance between two points\x1b[0m`);
+ok('a station on top of the house is no distance away',
+   milesBetween(40.9012, -74.5143, 40.9012, -74.5143) < 0.001);
+/* Newark to Naples — about the flight distance — so a sign error or a pair of
+   swapped arguments cannot pass. */
+ok('and a known long distance comes out right',
+   Math.abs(milesBetween(40.6828, -74.1692, 26.1550, -81.7753) - 1094) < 5,
+   milesBetween(40.6828, -74.1692, 26.1550, -81.7753).toFixed(1));
 
 console.log('\n\x1b[1mmerging observations over the model\x1b[0m');
 const mkDaily = n => {
@@ -145,6 +171,77 @@ console.log('\n\x1b[1mdeciding whether a station has a gauge at all\x1b[0m');
      st.reports.snowfall_sum === false, `seen ${st.seen.snowfall_sum}`);
   ok('a field reported every day does count',
      st.reports.precipitation_sum === true, `seen ${st.seen.precipitation_sum}`);
+}
+
+/* The defect the placement guard exists for: an id that is not the station
+   the table names. No amount of looking at the data can catch it, because the
+   wrong station's data is perfectly good data — from the wrong place. */
+console.log(`\n\x1b[1mrefusing a station that is not where the table says\x1b[0m`);
+{
+  const rows = (lat, lon, name) => Array.from({ length: 366 }, (_, i) => ({
+    DATE: new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(0, 10),
+    NAME: name, LATITUDE: String(lat), LONGITUDE: String(lon),
+    TMAX: '70', TMIN: '50', PRCP: '0.1', SNOW: '0' }));
+  const realFetch = globalThis.fetch;
+  const lines = [];
+
+  /* Every candidate answers from Fort Pierce: flawless coverage, wrong place.
+     Nothing must come back rather than something plausible. */
+  globalThis.fetch = async () => ({ ok: true, status: 200,
+    json: async () => rows(27.4981, -80.3764, 'FT PIERCE ST LUCIE CO INTL AP, FL US') });
+  const misplaced = await firstUsableStation('bonita', '2024-01-01', '2024-12-31', m => lines.push(m));
+  ok('a station 118 miles from where the table says it is gets rejected',
+     misplaced === null, misplaced ? `accepted ${misplaced.stationId}` : '');
+  ok('and the log blames the id rather than the coverage',
+     lines.some(l => /mi from where this/.test(l) && /Fix the id/.test(l)),
+     lines.join(' | ').slice(0, 200));
+
+  /* The same station answering from where it should be must still work, or
+     the guard is just an outage. */
+  globalThis.fetch = async () => ({ ok: true, status: 200,
+    json: async () => rows(26.1550, -81.7753, 'NAPLES MUNICIPAL AIRPORT, FL US') });
+  const right = await firstUsableStation('bonita', '2024-01-01', '2024-12-31', () => {});
+  ok('while the station at the coordinates in the table is accepted',
+     right !== null && right.stationId === STATIONS.bonita[0].id,
+     right ? right.stationId : 'rejected');
+
+  /* A payload with no coordinates is the shape NOAA returned before this
+     asked for them. It must not take the build down. */
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () =>
+    rows(0, 0, 'X').map(r => { const { LATITUDE, LONGITUDE, ...rest } = r; return rest; }) });
+  const unverified = await firstUsableStation('bonita', '2024-01-01', '2024-12-31', () => {});
+  ok('a response without coordinates is used rather than refused',
+     unverified !== null, 'rejected a station NOAA gave no position for');
+  globalThis.fetch = realFetch;
+}
+
+console.log(`\n\x1b[1mdiscarding a reading that cannot have happened\x1b[0m`);
+{
+  /* Naples, 2024-10-15: 9.0 inches of snow, low 71 degrees, no precipitation.
+     One keying slip in ten years, and enough to publish an inch of snow a year
+     for a town in the subtropics. */
+  const day = (d, snow, tmin) => ({ DATE: d, NAME: 'N', TMAX: '86', TMIN: String(tmin),
+                                    PRCP: '0.00', SNOW: snow });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => [
+    day('2024-10-15', '9.0', 71),        // impossible
+    day('2024-01-07', '4.0', 28),        // a real snowfall
+    day('2024-03-10', '0.2', 36),        // real, and marginal
+    day('2024-10-16', '0', 70)
+  ] });
+  const st = await fetchStationDaily('X', '2024-10-15', '2024-10-18');
+  globalThis.fetch = realFetch;
+  ok('snow reported on a day whose low was 71F is discarded',
+     st.byDate.get('2024-10-15').snowfall_sum === null,
+     String(st.byDate.get('2024-10-15').snowfall_sum));
+  ok('and it is discarded, not zeroed — a keying error is not a measurement',
+     st.snowRejected.length === 1 && st.snowRejected[0].date === '2024-10-15',
+     JSON.stringify(st.snowRejected));
+  ok('a genuine cold-day snowfall is kept', st.byDate.get('2024-01-07').snowfall_sum === 4);
+  ok('and so is a marginal one at 36F, which really happens',
+     st.byDate.get('2024-03-10').snowfall_sum === 0.2);
+  ok('the discarded day does not count towards having a snow gauge',
+     st.seen.snowfall_sum === 3, String(st.seen.snowfall_sum));
 }
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
