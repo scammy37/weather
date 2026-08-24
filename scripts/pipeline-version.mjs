@@ -35,6 +35,11 @@ export const PIPELINE_FILES = [
   'scripts/stations.mjs'           // which observations override the model
 ];
 
+/* Deliberately absent: js/radar.js, js/charts.js, js/units.js, js/app.js and
+   index.html. None of them can move a number, and js/radar.js exists as a
+   separate file largely so that radar work stops landing in config.js and
+   api.js, where it used to trip this check on every change. */
+
 export function pipelineVersion() {
   const h = crypto.createHash('sha256');
   for (const rel of PIPELINE_FILES) {

@@ -91,45 +91,6 @@ const LOCATIONS = [
    Light-mode aqua sits at 2.74:1 on the light surface, so every chart using it
    ships direct labels and the table view as relief. */
 
-/* Every WSR-88D dish within range of a home, and where it physically stands.
-
-   The overview thumbnail crops a dish's image around the house, so which dish
-   is used decides whether the house can sit in the middle of the square at all.
-   That is not the question /points answers: /points names the dish whose
-   coverage area owns a coordinate, which is about who forecasts for you, not
-   about what a picture centred on the dish can show. At two of the three homes
-   the two answers agree. At Bonita Springs they do not — Miami owns the point,
-   but Miami's image puts the house 107 km left of centre and hard against the
-   edge, while Tampa's, from all of 5 km further away, puts it 32 km off. So the
-   dish is chosen here, from geometry, by pickRadarSite().
-
-   The list is every WSR-88D within 250 km of a home, that being the range past
-   which a dish stops usefully covering it. The homes are fixed and dishes do
-   not move, so the list is too — and listing the losers as well as the winners
-   is what makes the choice a search rather than a hardcoded answer. */
-const RADAR_SITES = {
-  /* Rockaway NJ */
-  KDIX: { lat: 39.94694, lon: -74.41072 },   /* Philadelphia, 106 km */
-  KOKX: { lat: 40.86552, lon: -72.86392 },   /* Brookhaven, 139 km */
-  KBGM: { lat: 42.19969, lon: -75.98472 },   /* Binghamton, 189 km */
-  KENX: { lat: 42.58655, lon: -74.06408 },   /* Albany, 191 km */
-  KDOX: { lat: 38.82555, lon: -75.44000 },   /* Dover AFB, 244 km */
-  /* North Myrtle Beach SC */
-  KLTX: { lat: 33.98916, lon: -78.42916 },   /* Wilmington, 30 km */
-  KMHX: { lat: 34.77583, lon: -76.87639 },   /* Morehead City, 197 km */
-  KRAX: { lat: 35.66527, lon: -78.49000 },   /* Raleigh/Durham, 206 km */
-  KCAE: { lat: 33.94860, lon: -81.11861 },   /* Columbia, 226 km */
-  /* Bonita Springs FL */
-  KAMX: { lat: 25.61055, lon: -80.41305 },   /* Miami, 159 km */
-  KTBW: { lat: 27.70527, lon: -82.40194 },   /* Tampa, 164 km */
-  KBYX: { lat: 24.59694, lon: -81.70333 },   /* Key West, 194 km */
-  KMLB: { lat: 28.11305, lon: -80.65444 },   /* Melbourne, 226 km */
-};
-
-/* Past this a dish no longer usefully covers a home, so it is not a candidate
-   however well its image would frame one. */
-const RADAR_RANGE_KM = 250;
-
 const MONTHS      = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTHS_FULL = ['January','February','March','April','May','June',
                      'July','August','September','October','November','December'];
@@ -267,6 +228,6 @@ function wmoInfo(code, isDay = 1) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { LOCATIONS, RADAR_SITES, RADAR_RANGE_KM, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
+  module.exports = { LOCATIONS, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
                      SST_PERIOD, METRICS, METRIC_BY_KEY, GROUPS, WMO, wmoInfo };
 }

@@ -54,7 +54,8 @@ const CALLED = ['aggregateMonthly', 'mergeSST', 'annualSummary', 'frostStats', '
   'cacheGet', 'cacheSet', 'cacheKey', 'clearOurCache', 'diagStart', 'diagEnd', 'DIAG',
   'LOCATIONS', 'MONTHS', 'MONTHS_FULL', 'PERIODS', 'DEFAULT_PERIOD', 'SST_PERIOD',
   'METRICS', 'METRIC_BY_KEY', 'GROUPS', 'wmoInfo', 'isDark', 'SKY_RAMP', 'TEMP_POLES',
-  'showTip', 'moveTip', 'hideTip', 'esc'];
+  'showTip', 'moveTip', 'hideTip', 'esc',
+  'loadRadar', 'renderRadar', 'renderRadarRow', 'pickRadarSite', 'RADAR_SITES'];
 const missing = CALLED.filter(n => !declared.has(n));
 ok('every cross-file name app.js relies on is declared', missing.length === 0, missing.join(', '));
 console.log(`  verified ${CALLED.length} names`);
