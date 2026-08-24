@@ -100,7 +100,7 @@ function buildTabs() {
   all.type = 'button';
   all.dataset.id = ALL;
   all.setAttribute('aria-current', isAll() ? 'true' : 'false');
-  all.innerHTML = `<span aria-hidden="true">🏘️</span><span>All three homes</span>`;
+  all.innerHTML = `<span aria-hidden="true">🏘️</span><span>Tri-State</span>`;
   all.addEventListener('click', () => selectLocation(ALL));
   nav.appendChild(all);
 
@@ -589,8 +589,11 @@ async function loadRadar(locId) {
     S.radar[locId] = await fetchRadarStation(l);
   } catch (_) {
     const id = RADAR_FALLBACK[locId];
+    const site = id && RADAR_SITES[id];
     S.radar[locId] = id ? {
       id, fallback: true,
+      lat: site ? site.lat : undefined,
+      lon: site ? site.lon : undefined,
       loop:  `https://radar.weather.gov/ridge/standard/${id}_loop.gif`,
       still: `https://radar.weather.gov/ridge/standard/${id}_0.gif`,
       page:  `https://radar.weather.gov/station/${id.toLowerCase()}/standard`
@@ -688,9 +691,83 @@ function renderRadarRow(host) {
         </div>`).join('')}</div>
     </div>`;
   host.appendChild(p);
+  if (radarResize) radarResize.disconnect();
+  radarResize = window.ResizeObserver
+    ? new ResizeObserver(es => es.forEach(e => refitRadarThumb(e.target)))
+    : null;
   p.querySelectorAll('.js-rr-slot').forEach(slot =>
     mountRadarThumb(slot, loc(slot.dataset.loc)));
   return p;
+}
+
+/* ---------------------------------------------------------------------------
+   Where a place lands inside a RIDGE image.
+
+   The loop is 600x550 with the dish at its centre, and the map is drawn on a
+   fixed linear scale. NWS publishes no world file for these GIFs, so the scale
+   was measured off the city labels of two stations fourteen degrees of latitude
+   apart — KDIX and KAMX — against twenty known towns: 141 px per degree of
+   longitude and 126.2 px per degree of latitude put every one of them within a
+   couple of pixels, and the same pair of numbers fits both stations, so the
+   scale does not vary with latitude and one constant works for all three homes.
+   ------------------------------------------------------------------------- */
+/* mapTop/mapBottom bracket the rows that are actually map: the NWS banner
+   covers 0-23 and the dBZ scale and timestamp cover 526-549. Both are drawn
+   over the map, so a crop that runs into them shows a strip of chrome. */
+const RIDGE = { w: 600, h: 550, mapTop: 24, mapBottom: 526, pxLon: 141, pxLat: 126.2 };
+
+/* Pixel position of a home in its station's image, or null when the dish
+   coordinates are unknown — in which case the caller leaves the crop centred on
+   the dish, which is what it was before. */
+function ridgePoint(st, l) {
+  if (!st || !Number.isFinite(st.lat) || !Number.isFinite(st.lon)) return null;
+  return {
+    x: RIDGE.w / 2 + (l.lon - st.lon) * RIDGE.pxLon,
+    y: RIDGE.h / 2 - (l.lat - st.lat) * RIDGE.pxLat
+  };
+}
+
+/* Which point each box is framed on, and one observer for the row.
+
+   A single measurement cannot be trusted: after a viewport change the row is
+   rebuilt before the new width has reached it, and a box measured mid-flow
+   crops to the wrong window and then never corrects itself. Re-measuring on
+   every size change covers that and an ordinary resize alike, without guessing
+   at timing. The observer is rebuilt with the row, so it never holds on to
+   boxes that have been thrown away. */
+const RADAR_FRAMES = new WeakMap();
+let radarResize = null;
+
+function refitRadarThumb(box) {
+  const f = RADAR_FRAMES.get(box);
+  if (f) frameRadarThumb(box, f.img, f.pt);
+}
+
+/* Pan the thumbnail so the house sits in the middle of the box.
+
+   `left/top: 50%` puts the image's own top-left corner at the centre of the
+   box; translating back by the house's position as a percentage of the image's
+   own size then lands exactly that pixel on the centre, whatever size the box
+   is — no layout arithmetic in the CSS.
+
+   The pan is clamped to the map area, so neither empty background nor the
+   image's own banner can appear. That clamp does bite at Bonita Springs: the
+   dish NWS assigns it is a hundred miles east in Miami, which leaves the house
+   too near the left edge of its own image to be centred, and the crop shows it
+   as far from that edge as the frame allows. The other two centre exactly. */
+function frameRadarThumb(box, img, pt) {
+  if (!box || !img || !pt) return;
+  const scale = img.getBoundingClientRect().width / RIDGE.w;
+  if (!(scale > 0)) return;
+  const halfW = box.clientWidth  / 2 / scale;
+  const halfH = box.clientHeight / 2 / scale;
+  const clamp = (v, lo, hi) => lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi);
+  const cx = clamp(pt.x, halfW, RIDGE.w - halfW);
+  /* Keep the banner and the dBZ strip out of the crop where the box is short
+     enough for that to be possible, then guard the image's own edges. */
+  const cy = clamp(clamp(pt.y, RIDGE.mapTop + halfH, RIDGE.mapBottom - halfH),
+                   halfH, RIDGE.h - halfH);
+  img.style.transform = `translate(${-cx / RIDGE.w * 100}%, ${-cy / RIDGE.h * 100}%)`;
 }
 
 function mountRadarThumb(slot, l) {
@@ -714,6 +791,12 @@ function mountRadarThumb(slot, l) {
       </button>`;
 
     const img = slot.querySelector('img');
+    /* Crop around the house rather than around the dish. */
+    const btn = slot.querySelector('.ov-radar-btn');
+    RADAR_FRAMES.set(btn, { img, pt: ridgePoint(st, l) });
+    refitRadarThumb(btn);
+    if (radarResize) radarResize.observe(btn);
+    else requestAnimationFrame(() => refitRadarThumb(btn));
     img.addEventListener('error', () => { slot.innerHTML = `<div class="ov-radar-ph">radar<br>offline</div>`; });
     /* The whole card is a button that opens the home. Without this the radar
        would navigate away instead of enlarging. */

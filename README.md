@@ -14,7 +14,7 @@ Live site: **https://scammy37.github.io/weather**
 
 ## What's on the page
 
-**🏘️ All three homes** — the default view. Every home's current conditions,
+**🏘️ Tri-State** — the default view. Every home's current conditions,
 today's range, humidity, dew point, wind, water temperature, sun times and a
 compact seven-day strip, all side by side without a click. Above them a summary
 strip answers the cross-home questions: warmest and coolest right now, the

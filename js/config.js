@@ -96,6 +96,18 @@ const LOCATIONS = [
    Strand, Tampa Bay serves southwest Florida, Upton NY serves north Jersey. */
 const RADAR_FALLBACK = { nmb: 'KLTX', bonita: 'KTBW', rockaway: 'KOKX' };
 
+/* Where each dish physically stands. The RIDGE loop is drawn around the dish,
+   not around the house, so framing the house in the middle of the thumbnail
+   needs to know how far off-centre it sits. The live station comes from the
+   NWS point lookup and its coordinates come with it; this table only has to
+   cover the fallback ids above, for the case where api.weather.gov is down but
+   radar.weather.gov is still serving images. */
+const RADAR_SITES = {
+  KOKX: { lat: 40.86552, lon: -72.86392 },
+  KLTX: { lat: 33.98916, lon: -78.42916 },
+  KTBW: { lat: 27.70527, lon: -82.40194 }
+};
+
 const MONTHS      = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTHS_FULL = ['January','February','March','April','May','June',
                      'July','August','September','October','November','December'];
@@ -233,6 +245,6 @@ function wmoInfo(code, isDay = 1) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { LOCATIONS, RADAR_FALLBACK, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
+  module.exports = { LOCATIONS, RADAR_FALLBACK, RADAR_SITES, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
                      SST_PERIOD, METRICS, METRIC_BY_KEY, GROUPS, WMO, wmoInfo };
 }

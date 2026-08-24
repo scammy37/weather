@@ -313,7 +313,7 @@ async function fetchRadarStation(loc) {
     { label: `Radar station — ${loc.name}`, retries: 1, timeout: 15000 });
   const id = pt && pt.properties && pt.properties.radarStation;
   if (!id) throw new Error('no radar station for this point');
-  return {
+  const st = {
     id,
     /* RIDGE II serves an animated loop of the last ten sweeps as a plain GIF —
        no key, no tile maths, and it works as an <img>. */
@@ -321,6 +321,19 @@ async function fetchRadarStation(loc) {
     still: `https://radar.weather.gov/ridge/standard/${id}_0.gif`,
     page:  `https://radar.weather.gov/station/${id.toLowerCase()}/standard`
   };
+  /* Where the dish stands. The image is drawn around the dish, so the overview
+     needs this to crop the thumbnail around the house instead. Optional: if the
+     lookup fails the caller falls back to a station-centred crop, which is what
+     the page did before, so the radar is never lost over a missing coordinate. */
+  try {
+    const meta = await apiGet(`https://api.weather.gov/radar/stations/${id}`,
+      { label: `Radar site — ${id}`, retries: 1, timeout: 15000 });
+    const c = meta && meta.geometry && meta.geometry.coordinates;
+    if (Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+      st.lon = c[0]; st.lat = c[1];
+    }
+  } catch (_) {}
+  return st;
 }
 
 /* -----------------------------------------------------------------------------

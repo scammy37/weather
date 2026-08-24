@@ -223,9 +223,20 @@
   .ov-radar-btn:hover { border-color:var(--accent); }
   .ov-radar-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   /* The NWS loop carries a wide empty margin around the sweep, which is most of
-     the dead black area. Scaling past the frame crops that margin off instead
-     of framing it. */
-  .ov-radar-img { width:100%; height:100%; object-fit:cover; display:block; transform:scale(1.16); }
+     the dead black area. Drawing it larger than the box crops that margin off
+     instead of framing it — 116% is the same zoom the old object-fit:cover plus
+     scale(1.16) produced, kept so the row still reads at the same range.
+
+     Anchored top-left at the centre of the box and pulled back by a translate,
+     so JS can put any pixel of the image — the house, rather than the dish — in
+     the middle by naming it as a percentage of the image's own size. The
+     translate below is the fallback and reproduces the old station-centred crop;
+     frameRadarThumb() overwrites it. aspect-ratio states the GIF's shape up
+     front so the height is known before the image has loaded. */
+  .ov-radar-img {
+    position:absolute; left:50%; top:50%; width:116%; height:auto;
+    aspect-ratio:600/550; display:block; transform:translate(-50%,-50%);
+  }
   .ov-radar-cap {
     position:absolute; left:8px; bottom:8px; padding:2px 7px; border-radius:6px;
     background:rgba(0,0,0,.6); color:#fff; font-size:.66rem; font-weight:700; letter-spacing:.03em;
@@ -566,13 +577,13 @@
   <span id="footMeta"></span>
 </footer>
 
-<script src="js/config.js?v=9568820e07"></script>
-<script src="js/units.js?v=9568820e07"></script>
-<script src="js/solar.js?v=9568820e07"></script>
-<script src="js/api.js?v=9568820e07"></script>
-<script src="js/climate.js?v=9568820e07"></script>
-<script src="js/charts.js?v=9568820e07"></script>
-<script src="js/app.js?v=9568820e07"></script>
+<script src="js/config.js?v=a1dbb6475f"></script>
+<script src="js/units.js?v=a1dbb6475f"></script>
+<script src="js/solar.js?v=a1dbb6475f"></script>
+<script src="js/api.js?v=a1dbb6475f"></script>
+<script src="js/climate.js?v=a1dbb6475f"></script>
+<script src="js/charts.js?v=a1dbb6475f"></script>
+<script src="js/app.js?v=a1dbb6475f"></script>
 <script>
   /* Progressive install + offline shell. Skipped on file:// where service
      workers are not permitted, and non-fatal if registration is refused. */
