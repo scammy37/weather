@@ -279,15 +279,6 @@ export function nwsResponse(url) {
     return { properties: { gridId: 'ILM', gridX: 70, gridY: 60, radarStation,
       observationStations: 'https://api.weather.gov/gridpoints/ILM/70,60/stations' } };
   }
-  /* Where the dish stands, which is how the overview crops each thumbnail
-     around the house instead of around the radar. */
-  if (u.includes('/radar/stations/')) {
-    const id = u.split('/radar/stations/')[1];
-    const site = { KOKX: [-72.86392, 40.86552], KLTX: [-78.42916, 33.98916],
-                   KTBW: [-82.40194, 27.70527] }[id];
-    return site ? { type: 'Feature', geometry: { type: 'Point', coordinates: site },
-                    properties: { id } } : {};
-  }
   if (u.endsWith('/stations'))
     return { features: [{ id: 'https://api.weather.gov/stations/KCRE',
       properties: { stationIdentifier: 'KCRE', name: 'North Myrtle Beach Grand Strand Airport' } }] };

@@ -585,20 +585,16 @@ function renderQuickReference(host) {
 async function loadRadar(locId) {
   if (S.radar[locId]) return S.radar[locId];
   const l = loc(locId);
-  try {
-    S.radar[locId] = await fetchRadarStation(l);
-  } catch (_) {
-    const id = RADAR_FALLBACK[locId];
-    const site = id && RADAR_SITES[id];
-    S.radar[locId] = id ? {
-      id, fallback: true,
-      lat: site ? site.lat : undefined,
-      lon: site ? site.lon : undefined,
-      loop:  `https://radar.weather.gov/ridge/standard/${id}_loop.gif`,
-      still: `https://radar.weather.gov/ridge/standard/${id}_0.gif`,
-      page:  `https://radar.weather.gov/station/${id.toLowerCase()}/standard`
-    } : null;
-  }
+  const id = pickRadarSite(l);
+  const site = id && RADAR_SITES[id];
+  S.radar[locId] = id ? {
+    id, lat: site.lat, lon: site.lon,
+    /* RIDGE II serves an animated loop of the last ten sweeps as a plain GIF —
+       no key, no tile maths, and it works as an <img>. */
+    loop:  `https://radar.weather.gov/ridge/standard/${id}_loop.gif`,
+    still: `https://radar.weather.gov/ridge/standard/${id}_0.gif`,
+    page:  `https://radar.weather.gov/station/${id.toLowerCase()}/standard`
+  } : null;
   return S.radar[locId];
 }
 
@@ -641,7 +637,7 @@ function renderRadar(host, locId) {
         <img src="${esc(url)}" class="radar-img" loading="lazy"
              alt="National Weather Service radar loop for station ${esc(st.id)}, covering ${esc(l.name)}">
       </a>`;
-    note.innerHTML = `Station <b>${esc(st.id)}</b>${st.fallback ? ' (default for this area)' : ''}
+    note.innerHTML = `Station <b>${esc(st.id)}</b>
       · last ten sweeps · refreshed ${esc(new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}
       · click the image to open it on weather.gov`;
     wrap.querySelector('img').addEventListener('error', () => {
@@ -725,6 +721,51 @@ function ridgePoint(st, l) {
     x: RIDGE.w / 2 + (l.lon - st.lon) * RIDGE.pxLon,
     y: RIDGE.h / 2 - (l.lat - st.lat) * RIDGE.pxLat
   };
+}
+
+/* How far a house misses the middle of a square by, in image pixels — 0 when
+   the crop can be centred on it outright. This is the clamp in
+   frameRadarThumb() asked as a question about a station rather than applied to
+   one, so the two cannot disagree.
+
+   Measured against the row at its usual desktop size rather than at whatever
+   the window happens to be right now, because the answer picks a station, and
+   that has to be a stable choice: the id is captioned on the square and the
+   modal links to it. A caption that changed as you dragged the window would be
+   worse than a slightly worse crop. */
+const RIDGE_NOMINAL = { halfW: 259, halfH: 107 };
+
+function radarMiss(site, l) {
+  const pt = ridgePoint(site, l);
+  const { halfW, halfH } = RIDGE_NOMINAL;
+  return Math.hypot(
+    Math.max(0, halfW - pt.x, pt.x - (RIDGE.w - halfW)),
+    Math.max(0, (RIDGE.mapTop + halfH) - pt.y, pt.y - (RIDGE.mapBottom - halfH)));
+}
+
+/* Rough great-circle distance. Only ever compared against other distances and
+   against a range in the hundreds of kilometres, so the flat-earth shortcut is
+   several orders of magnitude better than it needs to be. */
+function radarDistanceKm(site, l) {
+  return Math.hypot((site.lat - l.lat) * 111.19,
+                    (site.lon - l.lon) * 111.19 * Math.cos((site.lat + l.lat) / 2 * Math.PI / 180));
+}
+
+/* The dish whose image can put this house closest to the middle of the square,
+   out of those close enough to cover it. Ties — two dishes that can both centre
+   the house outright, which is the common case — go to the nearer one, because
+   past that the only thing left to prefer is a shorter beam. */
+function pickRadarSite(l) {
+  let best = null;
+  for (const id of Object.keys(RADAR_SITES)) {
+    const site = RADAR_SITES[id];
+    const km = radarDistanceKm(site, l);
+    if (km > RADAR_RANGE_KM) continue;
+    const miss = radarMiss(site, l);
+    if (!best || miss < best.miss - 0.5 || (miss < best.miss + 0.5 && km < best.km))
+      best = { id, miss, km };
+  }
+  return best && best.id;
 }
 
 /* Which point each box is framed on, and one observer for the row.
@@ -821,7 +862,7 @@ function openRadarViewer(l, st) {
     <div class="radar-modal-box" role="document">
       <div class="radar-modal-h">
         <div><b>📡 ${esc(l.name)}, ${l.state}</b>
-          <span class="radar-modal-sub">station ${esc(st.id)}${st.fallback ? ' (default for this area)' : ''} · last ten sweeps</span></div>
+          <span class="radar-modal-sub">station ${esc(st.id)} · last ten sweeps</span></div>
         <div class="radar-modal-btns">
           <button class="btn js-radar-refresh" type="button">↻ Refresh</button>
           <a class="btn" href="${esc(st.page)}" target="_blank" rel="noopener">Open on weather.gov ↗</a>

@@ -655,8 +655,11 @@ async function main() {
      /Rockaway/.test(cells[0].name) && /Myrtle/.test(cells[1].name) && /Bonita/.test(cells[2].name),
      cells.map(c => c.name).join(' | '));
   /* The three homes really are under three different dishes; a row showing the
-     same station three times would be worse than no row. */
-  const want = ['KOKX', 'KLTX', 'KTBW'];
+     same station three times would be worse than no row. These are the dishes
+     pickRadarSite() settles on — the one whose image can put each house nearest
+     the middle of its square, which at Bonita is Tampa rather than the nearer
+     Miami. */
+  const want = ['KDIX', 'KLTX', 'KTBW'];
   cells.forEach((c, i) => ok(`${want[i]} is the station shown for ${c.name.trim()}`,
     c.src.includes(want[i]) && c.cap.includes(want[i]), `${c.cap} / ${c.src}`));
   ok('each image names the place it covers in its alt text',
