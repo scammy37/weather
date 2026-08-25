@@ -247,7 +247,7 @@ function rangeChart(svg, opts) {
 
   svg.setAttribute('width', W); svg.setAttribute('height', H);
   svg.innerHTML =
-      legend(legendItems, PAD.l, 12)
+      legend(legendItems, PAD.l, 12, W - PAD.l - PAD.r)
     + gridLayer(PAD.l, W - PAD.r, yOf, scale, 0, W, H, yFmt)
     + (selected >= 0 ? `<rect x="${(PAD.l + step * selected).toFixed(1)}" y="${PAD.t}" width="${step.toFixed(1)}" height="${plotH}" fill="${t.ink}" opacity="0.05"/>` : '')
     + band
@@ -305,7 +305,7 @@ function multiLine(svg, opts) {
 
   svg.setAttribute('width', W); svg.setAttribute('height', H);
   svg.innerHTML =
-      legend(series.map(s => ({ c: s.color, l: s.label })), PAD.l, 12)
+      legend(series.map(s => ({ c: s.color, l: s.label })), PAD.l, 12, W - PAD.l - PAD.r)
     + gridLayer(PAD.l, W - PAD.r, yOf, scale, dec >= 2 ? 1 : dec, W, H, valFmt)
     + (selected >= 0 ? `<rect x="${(PAD.l + step * selected).toFixed(1)}" y="${PAD.t}" width="${step.toFixed(1)}" height="${plotH}" fill="${t.ink}" opacity="0.05"/>` : '')
     + paths + dots + endLabels
@@ -355,7 +355,7 @@ function stackedBar(svg, opts) {
 
   svg.setAttribute('width', W); svg.setAttribute('height', H);
   svg.innerHTML =
-      legend(seriesLabels.map((l, k) => ({ c: ramp[k], l })), PAD.l, 12)
+      legend(seriesLabels.map((l, k) => ({ c: ramp[k], l })), PAD.l, 12, W - PAD.l - PAD.r)
     + gridLayer(PAD.l, W - PAD.r, yOf, scale, 0, W, H)
     + `<line x1="${PAD.l}" y1="${yOf(0).toFixed(1)}" x2="${W - PAD.r}" y2="${yOf(0).toFixed(1)}" stroke="${t.axis}" stroke-width="1"/>`
     + bars + monthAxis(labels, xCenter, H - 8, selected);
@@ -580,13 +580,21 @@ function hourlyChart(svg, opts) {
 }
 
 /* --- shared chrome ------------------------------------------------------- */
-function legend(items, x, y) {
+/* Legend items flow left to right and wrap to a new row when the next item
+   would cross maxW. Without the wrap, three home names like "North Myrtle
+   Beach, SC" ran off the right edge of a narrow chart on a phone. maxW is the
+   chart's inner width; when it is not given the legend behaves as before. */
+function legend(items, x, y, maxW = Infinity) {
   const t = T();
-  let out = `<g transform="translate(${x},${y})">`, dx = 0;
+  const rowH = 16;
+  let out = `<g transform="translate(${x},${y})">`, dx = 0, row = 0;
   for (const it of items) {
-    out += `<rect x="${dx}" y="0" width="10" height="10" rx="2" fill="${it.c}"/>`
-        +  `<text x="${dx + 15}" y="5.5" dominant-baseline="middle" font-size="10.5" fill="${t.ink2}">${esc(it.l)}</text>`;
-    dx += 15 + String(it.l).length * 6.1 + 18;
+    const w = 15 + String(it.l).length * 6.1 + 18;
+    if (dx > 0 && dx + w > maxW) { dx = 0; row++; }   // wrap before overflowing
+    const yy = row * rowH;
+    out += `<rect x="${dx}" y="${yy}" width="10" height="10" rx="2" fill="${it.c}"/>`
+        +  `<text x="${dx + 15}" y="${yy + 5.5}" dominant-baseline="middle" font-size="10.5" fill="${t.ink2}">${esc(it.l)}</text>`;
+    dx += w;
   }
   return out + '</g>';
 }

@@ -40,6 +40,26 @@ export const PIPELINE_FILES = [
    separate file largely so that radar work stops landing in config.js and
    api.js, where it used to trip this check on every change. */
 
+/* Hash of an explicit set of files, hex, first 12 chars. The building block
+   under pipelineVersion(); exported so validation.json can fingerprint the
+   inputs that determine IT — which are not the same as the ones that determine
+   the climate numbers. */
+export function fingerprintOf(relFiles) {
+  const h = crypto.createHash('sha256');
+  for (const rel of relFiles) {
+    const p = path.join(ROOT, rel);
+    h.update(rel);
+    h.update(fs.existsSync(p) ? fs.readFileSync(p) : Buffer.from('<missing>'));
+  }
+  return h.digest('hex').slice(0, 12);
+}
+
+/* The files that decide the NOAA-vs-model bias report. Coordinate drift in
+   config.js and a changed station list or comparison method both belong here,
+   so a validation.json measured against a superseded setup is detectable. */
+export const VALIDATION_FILES = ['scripts/validate-climate.mjs', 'js/config.js'];
+export const validationVersion = () => fingerprintOf(VALIDATION_FILES);
+
 export function pipelineVersion() {
   const h = crypto.createHash('sha256');
   for (const rel of PIPELINE_FILES) {

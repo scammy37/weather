@@ -27,6 +27,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { validationVersion } from './pipeline-version.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -74,10 +75,23 @@ const STATIONS = {
 };
 
 /* --- NOAA NCEI monthly normals ------------------------------------------ */
-async function noaaNormals(stationId) {
+const R_MI = 3958.7613, rad = d => d * Math.PI / 180;
+function milesBetween(la1, lo1, la2, lo2) {
+  const dLa = rad(la2 - la1), dLo = rad(lo2 - lo1);
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(rad(la1)) * Math.cos(rad(la2)) * Math.sin(dLo / 2) ** 2;
+  return 2 * R_MI * Math.asin(Math.sqrt(h));
+}
+/* A normals station in the wrong climate produces a bias figure quietly about
+   somewhere else — the Moorestown-for-Morristown class the header describes.
+   So the station's own coordinates are asked for and checked against the home.
+   Generous: a valid comparison station can sit 40+ miles out, but 80 catches a
+   different metro. */
+const MAX_STATION_MI = 80;
+async function noaaNormals(stationId, home) {
   const url = 'https://www.ncei.noaa.gov/access/services/data/v1'
     + `?dataset=normals-monthly-1991-2020&stations=${stationId}`
     + '&startDate=0001-01-01&endDate=9996-12-31&format=json&units=standard'
+    + '&includeStationName=true&includeStationLocation=1'
     + '&dataTypes=MLY-TMAX-NORMAL,MLY-TMIN-NORMAL,MLY-PRCP-NORMAL';
   const res = await fetch(url, { headers: { 'User-Agent': 'tri-state-weather-dashboard (validation)' } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -85,8 +99,11 @@ async function noaaNormals(stationId) {
   if (!Array.isArray(rows) || !rows.length) throw new Error('no rows');
 
   const out = Array.from({ length: 12 }, () => ({ tmax: null, tmin: null, prcp: null }));
-  let name = stationId;
+  let name = stationId, slat = null, slon = null;
   for (const r of rows) {
+    if (slat == null && r.LATITUDE != null && r.LONGITUDE != null) {
+      slat = parseFloat(r.LATITUDE); slon = parseFloat(r.LONGITUDE);
+    }
     /* The normals carry a pseudo-date; only the month is meaningful. */
     const m = +String(r.DATE || '').slice(-2) - 1;
     if (!(m >= 0 && m < 12)) continue;
@@ -98,13 +115,18 @@ async function noaaNormals(stationId) {
   }
   const filled = out.filter(o => o.tmax != null).length;
   if (filled < 12) throw new Error(`only ${filled}/12 months returned`);
+  if (home && Number.isFinite(slat)) {
+    const off = milesBetween(home.lat, home.lon, slat, slon);
+    if (off > MAX_STATION_MI) throw new Error(`${name} is ${off.toFixed(0)} mi from ${home.name} — wrong region`);
+  }
   return { stationId, name, months: out };
 }
 
 async function firstWorkingStation(homeId) {
+  const home = cfg.LOCATIONS.find(l => l.id === homeId);
   for (const id of STATIONS[homeId] || []) {
     try {
-      const r = await noaaNormals(id);
+      const r = await noaaNormals(id, home);
       log(`    NOAA station ${id} — ${r.name}`);
       return r;
     } catch (err) {
@@ -150,6 +172,7 @@ api.setPacing(6000);   // ~1,400 weighted calls over the whole run; well inside 
 
 const report = {
   generated: new Date().toISOString(),
+  pipeline: validationVersion(),   // detects a report measured against a superseded config
   window: `${REF_START.slice(0, 4)}–${REF_END.slice(0, 4)}`,
   note: 'ERA5 and ERA5-Land compared against NOAA NCEI 1991-2020 monthly normals over the identical window, so model bias is isolated from period-to-period warming.',
   homes: {}

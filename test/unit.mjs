@@ -73,7 +73,7 @@ eq('Jan mean wind', jan.windSpeed, 10);
 eq('Jan peak gust', jan.windGust, 30);
 eq('Jan humidity', jan.humidity, 70);
 eq('Jan cloud cover', jan.cloudCover, 10);
-eq('Jan pressure inHg (1016 hPa)', jan.pressure, 1016 * 0.02953, 1e-6);
+eq('Jan pressure inHg (1016 hPa)', jan.pressure, 1016 * 0.029529983, 1e-6);
 
 console.log('\n\x1b[1maggregateMonthly — total metrics (per-year sums, averaged)\x1b[0m');
 eq('Jan precip total (31 × 0.5)', jan.precipTotal, 15.5, 1e-9);
@@ -554,6 +554,33 @@ console.log('\n\x1b[1malert severity ordering\x1b[0m');
   const sorted = [{ severity: 'Nonsense' }, { severity: 'Extreme' }, { severity: 'Minor' }]
     .sort((a, b) => r(a.severity) - r(b.severity));
   eq('Extreme leads the sorted list, not the nonsense value', sorted[0].severity === 'Extreme' ? 1 : 0, 1);
+}
+
+console.log('\n\x1b[1mmissing temperature reports unknown, not zero\x1b[0m');
+/* A home whose thermometer is silent must not read "0 hot days" — that is a
+   claim, and the same conflation that once erased the snowfall. */
+{
+  const d = frostSynth([2020, 2021], 79, 314);
+  for (const k of ['temperature_2m_max', 'temperature_2m_min', 'temperature_2m_mean',
+                   'apparent_temperature_max', 'apparent_temperature_min'])
+    d[k] = d.time.map(() => null);
+  const r = aggregateMonthly(d, sunClim)[6];
+  ok('hot90 is null when there is no temperature', r.hot90 === null, String(r.hot90));
+  ok('freeze32 is null too', r.freeze32 === null, String(r.freeze32));
+  ok('beachDays is null, not zero', r.beachDays === null, String(r.beachDays));
+  ok('pleasantDays is null, not zero', r.pleasantDays === null, String(r.pleasantDays));
+  /* Precipitation was present, so its counts are real and stay numbers. */
+  ok('a field that DID have data is still a number', typeof r.wetDays === 'number', String(r.wetDays));
+}
+
+console.log('\n\x1b[1man annual total needs all twelve months\x1b[0m');
+{
+  const full = aggregateMonthly(synth([2023, 2024]), sunClim);
+  const a1 = annualSummary(full);
+  ok('twelve months sum to a number', typeof a1.annualPrecip === 'number', String(a1.annualPrecip));
+  const eleven = full.slice(0, 11);
+  const a2 = annualSummary(eleven);
+  ok('eleven months yield null, not a partial sum', a2.annualPrecip === null, String(a2.annualPrecip));
 }
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);

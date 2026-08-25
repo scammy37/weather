@@ -54,11 +54,10 @@ const TOTAL_KEYS = ['precipTotal','rainfall','snowfall','precipHours','et0','wet
 'breezyDays','strongWindDays','severeWindDays',
 'hdd','cdd','gdd'];
 
-const WIND = { breezy: 25, strong: 39, severe: 58, hurricane: 74 };
-const ATLANTIC_SEASON = [5, 6, 7, 8, 9, 10];        // Jun–Nov, zero-indexed
+const WIND = { breezy: 25, strong: 39, severe: 58 };  // mph gust thresholds
 
 const MJ_TO_KWH = 1 / 3.6;
-const HPA_TO_INHG = 0.02953;
+const HPA_TO_INHG = 0.029529983;  // matches PRESSURE_TO_INHG in units.js
 
 const isNum = v => typeof v === 'number' && Number.isFinite(v);
 const mean  = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
@@ -214,8 +213,13 @@ function aggregateMonthly(daily, sunClim) {
          large share means the counts are on the optimistic definition again
          and should not be compared against published figures. */
       skyFromSunshine: nSun ? nSunFallback / nSun : null,
-      hot90: hot, hot95: veryHot, freeze32: freeze, freeze20: hard,
-      beachDays: beach, pleasantDays: pleasant,
+      /* Temperature-derived counts report "unknown" when there were no
+         temperature readings, exactly as the precipitation totals do — a 0
+         here would claim zero hot days at a home whose thermometer was simply
+         silent, the same conflation that once erased the snowfall. */
+      hot90: nTemp ? hot : null, hot95: nTemp ? veryHot : null,
+      freeze32: nTemp ? freeze : null, freeze20: nTemp ? hard : null,
+      beachDays: nTemp ? beach : null, pleasantDays: nTemp ? pleasant : null,
       breezyDays: breezy, strongWindDays: strongWind, severeWindDays: severeWind,
       hdd: nTemp ? hdd : null, cdd: nTemp ? cdd : null, gdd: nTemp ? gdd : null
     });
@@ -241,7 +245,6 @@ function aggregateMonthly(daily, sunClim) {
     row.recordHigh = (() => { let m = -Infinity; for (const i of idxs) if (isNum(tmax[i]) && tmax[i] > m) m = tmax[i]; return m === -Infinity ? null : m; })();
     row.recordLow  = (() => { let m =  Infinity; for (const i of idxs) if (isNum(tmin[i]) && tmin[i] < m) m = tmin[i]; return m ===  Infinity ? null : m; })();
     row.recordRain = (() => { let m = -Infinity; for (const i of idxs) if (isNum(precip[i]) && precip[i] > m) m = precip[i]; return m === -Infinity ? null : m; })();
-    row.recordSnow = (() => { let m = -Infinity; for (const i of idxs) if (isNum(snow[i]) && snow[i] > m) m = snow[i]; return m === -Infinity ? null : m; })();
 
     const sh = meanOf(sunshine, idxs);
     row.sunHours = isNum(sh) ? sh / 3600 : null;
@@ -486,7 +489,11 @@ function mergeSST(rows, sstRows) {
    --------------------------------------------------------------------------- */
 function annualSummary(rows) {
   if (!rows || !rows.length) return null;
-  const sum = k => { const v = rows.map(r => r[k]).filter(isNum); return v.length === 12 ? v.reduce((a, b) => a + b, 0) : (v.length ? v.reduce((a, b) => a + b, 0) : null); };
+  /* An annual total needs all twelve months, or it silently under-reports:
+     eleven months of rain summed as if it were the year. Missing any month
+     yields null rather than a confident partial sum. (This guard used to have
+     two identical branches and did nothing.) */
+  const sum = k => { const v = rows.map(r => r[k]).filter(isNum); return v.length === 12 ? v.reduce((a, b) => a + b, 0) : null; };
   const avg = k => { const v = rows.map(r => r[k]).filter(isNum); return v.length ? mean(v) : null; };
   const argMax = k => { let best = null; for (const r of rows) if (isNum(r[k]) && (!best || r[k] > best[k])) best = r; return best; };
   const argMin = k => { let best = null; for (const r of rows) if (isNum(r[k]) && (!best || r[k] < best[k])) best = r; return best; };
@@ -528,6 +535,6 @@ function annualSummary(rows) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { TOTAL_KEYS, aggregateMonthly, mergeSST, annualSummary, frostStats, yearlySeries,
-                     trendPerDecade, dayOfYear, doyToLabel, TH, WIND, ATLANTIC_SEASON,
+                     trendPerDecade, dayOfYear, doyToLabel, TH, WIND,
                      MIN_DAYS_FOR_MONTH };
 }
