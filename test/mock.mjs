@@ -259,6 +259,22 @@ export function alertsResponse(url, alerts = null) {
 }
 
 /* NOAA CO-OPS water-temperature reading. */
+/* USGS instantaneous values. Parameter 00010 is water temperature and USGS
+   reports it in CELSIUS, which is the conversion this mock exists to exercise:
+   a mock that hands back Fahrenheit would let a missing conversion pass. */
+export function usgsWaterResponse(url, tempC = 24.5, ageHours = 0.25) {
+  const site = (/sites=(\d+)/.exec(url) || [])[1] || '00000000';
+  const when = new Date(Date.now() - ageHours * 3600000).toISOString();
+  return {
+    value: {
+      timeSeries: [{
+        sourceInfo: { siteName: 'Watson Creek at Manasquan NJ', siteCode: [{ value: site }] },
+        values: [{ value: [{ value: String(tempC), dateTime: when }] }]
+      }]
+    }
+  };
+}
+
 export function coopsResponse(url, tempF = 78.4) {
   const st = new URL(url).searchParams.get('station');
   return { metadata: { id: st, name: 'Test Gauge' },

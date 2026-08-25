@@ -46,15 +46,18 @@ function waterTemp(l, d) {
   const mc = d && d.marine && d.marine.current;
   const model = mc && typeof mc.sea_surface_temperature === 'number'
     ? mc.sea_surface_temperature : null;
-  const preferGauge = l.marine.preferGauge !== false;
-  if (preferGauge && gauge) return { tempF: gauge.tempF, from: `measured at ${gauge.name}`, gauge, model };
+  const m = l.marine;
+  const gaugeLabel = () => `measured at ${gauge.name}`
+    + (m.gaugeMiles ? `, ${m.gaugeMiles} mi away` : '')
+    + (m.gaugeNote ? ` — ${m.gaugeNote}` : '');
+  if (m.preferGauge !== false && gauge) return { tempF: gauge.tempF, from: gaugeLabel(), gauge, model };
   if (model != null) {
     return { tempF: model,
-             from: `marine model at ${l.marine.proxyName || l.short}`
+             from: `marine model at ${m.proxyName || l.short}`
                  + (gauge ? ` · nearest sensor ${gauge.name}, ${Math.round(gauge.tempF)}°F` : ''),
              gauge, model };
   }
-  if (gauge) return { tempF: gauge.tempF, from: `measured at ${gauge.name}`, gauge, model };
+  if (gauge) return { tempF: gauge.tempF, from: gaugeLabel(), gauge, model };
   return null;
 }
 
@@ -256,7 +259,7 @@ async function loadAllLive(force) {
         fetchMarineLive(l).catch(() => null),
         fetchAlerts(l).catch(() => null),
         /* A measured water temperature, alongside the model's. */
-        fetchWaterTempNOAA(l).catch(() => null)
+        fetchWaterTemp(l).catch(() => null)
       ]);
       S.live[l.id] = { wx, air, marine, alerts, water, at: Date.now(), error: null, source: 'Open-Meteo' };
     } catch (err) {
@@ -265,7 +268,7 @@ async function loadAllLive(force) {
          alerts and water temperature come from elsewhere entirely. */
       const [alerts, water, nws] = await Promise.all([
         fetchAlerts(l).catch(() => null),
-        fetchWaterTempNOAA(l).catch(() => null),
+        fetchWaterTemp(l).catch(() => null),
         fetchNWSObservation(l).catch(() => null)
       ]);
       S.live[l.id] = { wx: null, air: null, marine: null, alerts, water, nws, at: Date.now(),
@@ -1770,14 +1773,15 @@ function renderDiagnostics() {
       ${c && c.meta && c.meta.modelNote && c.meta.modelNote !== c.meta.model ? `<br><span style="color:var(--muted)">${esc(c.meta.modelNote)}</span>` : ''}</div>
     <div><b>Accuracy check</b> — ${validationLine()}</div>
     <div><b>Severe weather alerts</b> — US National Weather Service (api.weather.gov), active watches and warnings for each home's exact coordinates.</div>
-    <div><b>Water temperature</b> — ${l.marine.preferGauge === false
-      ? `the marine model at ${esc(l.marine.proxyName || l.short)}. NOAA has no water-temperature
-         sensor there; of the 239 CO-OPS stations that report one, the nearest is
-         ${esc(l.marine.coopsName || 'n/a')} (station ${esc(l.marine.coopsStation || '—')}), which sits
-         26 miles north inside Raritan Bay, so it is shown as corroboration rather than as the figure.`
+    <div><b>Water temperature</b> — ${l.marine.usgsStation
+      ? `USGS gauge ${esc(l.marine.usgsStation)} (${esc(l.marine.usgsName)}), ${esc(String(l.marine.gaugeMiles))} miles
+         from ${esc(l.marine.proxyName || l.short)} and reporting every fifteen minutes.
+         ${l.marine.gaugeNote ? esc(l.marine.gaugeNote.charAt(0).toUpperCase() + l.marine.gaugeNote.slice(1)) + '.' : ''}
+         NOAA's own tide-gauge network has nothing closer than ${esc(l.marine.coopsName || 'n/a')},
+         26 miles north inside Raritan Bay.`
       : `NOAA CO-OPS tide gauge (${esc(l.marine.coopsName || 'n/a')}, station ${esc(l.marine.coopsStation || '—')}),
-         a physical sensor in the water being described. The marine model is shown alongside it
-         as corroboration.`}</div>
+         a physical sensor in the water being described.`}
+      The marine model offshore is shown alongside it as corroboration.</div>
     <div><b>Backup provider</b> — if Open-Meteo is unreachable, current conditions fall back to the nearest
       National Weather Service station observation, so an outage at one provider does not blank the page.</div>
     <div><b>Ocean temperature and waves</b> — Open-Meteo Marine API at ${esc(l.marine.label)}${c && c.meta && c.meta.sst && c.meta.sst.years ? ` · ${c.meta.sst.years} years retrieved` : ''}.</div>

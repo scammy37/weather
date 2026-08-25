@@ -35,16 +35,21 @@ const LOCATIONS = [
       proxyName: 'Point Pleasant Beach',
       proxyDistanceMi: 61,
       label: 'Atlantic Ocean — off Point Pleasant Beach (nearest ocean, 61 mi)',
-      /* NOAA has NO water-temperature sensor at Point Pleasant. Of the 239
-         CO-OPS stations that report one, the nearest is Sandy Hook, 26 miles
-         north of Point Pleasant and inside Raritan Bay; everything after that
-         is the Delaware River or New York Harbour, which are estuaries rather
-         than ocean. So the ocean temperature shown for this home is the marine
-         model AT Point Pleasant, and the Sandy Hook gauge is displayed beside
-         it as corroboration rather than as the headline figure — the reverse
-         of the other two homes, where a real sensor sits in the water being
-         described. `scripts/investigate-coops.mjs` re-runs that search. */
-      preferGauge: false,
+      /* NOAA's tide-gauge network has nothing at Point Pleasant — its nearest
+         water-temperature sensor is Sandy Hook, 26 miles north inside Raritan
+         Bay. USGS does: gauge 01408048 sits 1.4 miles away at the Manasquan
+         inlet and reports every fifteen minutes. Checking one network and
+         concluding nobody measured it was the mistake; the search now covers
+         CO-OPS, NDBC and USGS (scripts/investigate-coops.mjs).
+
+         It is an inlet rather than the open beach, so it runs warmer than the
+         ocean in summer and cooler in winter, and the page says so. The marine
+         model offshore is shown beside it. */
+      preferGauge: true,
+      usgsStation: '01408048',
+      usgsName: 'Watson Creek at Manasquan, NJ',
+      gaugeMiles: 1.4,
+      gaugeNote: 'a tidal creek at the Manasquan inlet, not the open beach',
       body: 'Atlantic Ocean',
       coopsStation: '8531680', coopsName: 'Sandy Hook, NJ'
     }

@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { archiveResponse, forecastResponse, marineResponse, airResponse, alertsResponse,
-         coopsResponse, nwsResponse } from './mock.mjs';
+         coopsResponse, nwsResponse, usgsWaterResponse } from './mock.mjs';
 import { createRequire } from 'module';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,6 +55,7 @@ async function routeAllMocks(pg) {
     headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
   await routeRadar(pg);
   await pg.route('**://api.tidesandcurrents.noaa.gov/**', r => j(r, coopsResponse(r.request().url())));
+  await pg.route('**://waterservices.usgs.gov/**', r => j(r, usgsWaterResponse(r.request().url())));
   await pg.route('**://api.weather.gov/**', r => j(r, nwsResponse(r.request().url())));
   await pg.route('**://api.weather.gov/alerts/**', r => j(r, alertsResponse(r.request().url())));
   await pg.route('**://api.open-meteo.com/**', r => j(r, forecastResponse(r.request().url())));
@@ -138,6 +139,7 @@ async function main() {
      snapshot path with the fixture served explicitly. */
   await routeRadar(page);
   await page.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await page.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await page.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await page.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await page.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
@@ -417,6 +419,7 @@ async function main() {
   const page2 = await (await browser.newContext(CTX)).newPage();
   await routeRadar(page2);
   await page2.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await page2.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await page2.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await page2.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await page2.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
@@ -451,6 +454,7 @@ async function main() {
   const page3 = await (await browser.newContext(CTX)).newPage();
   await routeRadar(page3);
   await page3.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await page3.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await page3.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await page3.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await page3.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
@@ -472,6 +476,7 @@ async function main() {
   const m = await (await browser.newContext({ ...CTX, viewport: { width: 390, height: 844 } })).newPage();
   await routeRadar(m);
   await m.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await m.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await m.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await m.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await m.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));
@@ -771,12 +776,22 @@ async function main() {
   await page.click('.tab[data-id="rockaway"]');
   await page.waitForSelector('.now-temp', { timeout: 15000 });
   const rockTxt = await page.textContent('#liveHost');
-  ok('Rockaway shows the ocean at Point Pleasant, not the Sandy Hook gauge',
-     /marine model at Point Pleasant/.test(rockTxt),
-     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 160));
-  ok('and still names the nearest real sensor alongside it',
-     /nearest sensor/.test(rockTxt) || /Sandy Hook/.test(rockTxt),
-     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 160));
+  ok('Rockaway reads a real gauge at Manasquan, 1.4 mi from Point Pleasant',
+     /Watson Creek at Manasquan/.test(rockTxt),
+     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 200));
+  ok('and says how far away it is',
+     /1\.4 mi away/.test(rockTxt), rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 200));
+  /* It is an inlet, not the open beach, and that changes what the number
+     means in summer. Saying so is the difference between a measurement and a
+     claim about the reader's swim. */
+  ok('and does not pass an inlet off as the open ocean',
+     /tidal creek at the Manasquan inlet/.test(rockTxt),
+     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 200));
+  /* USGS reports parameter 00010 in Celsius. 24.5°C is 76.1°F; if the
+     conversion were missing this tile would read 24.5°F, which is ice. */
+  ok('the Celsius reading is converted, not shown raw',
+     /76\.\d°F/.test(rockTxt) && !/24\.5°F/.test(rockTxt),
+     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 120));
   ok('the ocean distance is the measured 61 miles, not the old 55',
      !/55 mi/.test(rockTxt), rockTxt.slice(0, 200));
   await page.click('.tab[data-id="nmb"]');
@@ -791,6 +806,7 @@ async function main() {
   const fb = await fbCtx.newPage();
   await routeRadar(fb);
   await fb.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await fb.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await fb.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await fb.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await fb.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'nf' }));
@@ -825,6 +841,7 @@ async function main() {
   const sp = await snapCtx.newPage();
   await routeRadar(sp);
   await sp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await sp.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await sp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await sp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await sp.route('**/data/climate.json', serveSnapshot(fixture));
@@ -859,6 +876,7 @@ async function main() {
   const sp2 = await snapCtx.newPage();
   await routeRadar(sp2);
   await sp2.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await sp2.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await sp2.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await sp2.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await sp2.route('**/data/climate.json', serveSnapshot(partial));
@@ -884,6 +902,7 @@ async function main() {
   const rp = await rlCtx.newPage();
   await routeRadar(rp);
   await rp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await rp.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await rp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await rp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await rp.route('**/data/climate.json', serveSnapshot(partial));
@@ -947,6 +966,7 @@ async function main() {
   const tzp = await tzCtx.newPage();
   await routeRadar(tzp);
   await tzp.route('**://api.tidesandcurrents.noaa.gov/**', r => json(r, coopsResponse(r.request().url())));
+await tzp.route('**://waterservices.usgs.gov/**', r => json(r, usgsWaterResponse(r.request().url())));
   await tzp.route('**://api.weather.gov/**', r => json(r, nwsResponse(r.request().url())));
   await tzp.route('**://api.weather.gov/alerts/**', r => json(r, alertsResponse(r.request().url())));
   await tzp.route('**/data/climate.json', r => r.fulfill({ status: 404, body: 'not found' }));

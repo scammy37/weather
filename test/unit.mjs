@@ -481,5 +481,36 @@ ok('a day with no readings reports null, not Infinity',
 ok('an empty response yields no rows rather than throwing',
    api2.hourlyToDaily({}).length === 0);
 
+console.log('\n\x1b[1mUSGS water temperature\x1b[0m');
+/* USGS reports parameter 00010 in Celsius, and a gauge that stopped years ago
+   still answers with its last value — which would render as today's water
+   temperature. Both are guarded. */
+{
+  const loc = { marine: { usgsStation: '01408048', usgsName: 'Watson Creek at Manasquan, NJ' } };
+  const reply = (tempC, ageHours) => ({
+    ok: true, status: 200, json: async () => ({ value: { timeSeries: [{
+      sourceInfo: { siteCode: [{ value: '01408048' }] },
+      values: [{ value: [{ value: String(tempC),
+        dateTime: new Date(Date.now() - ageHours * 3600000).toISOString() }] }] }] } }) });
+  const realFetch3 = globalThis.fetch;
+  const run = async (c, age) => {
+    globalThis.fetch = async () => reply(c, age);
+    try { return await api2.fetchWaterTempUSGS(loc); }
+    catch (e) { return { error: e.message }; }
+  };
+  const fresh = await run(24.5, 0.25);
+  eq('24.5°C is converted to Fahrenheit', fresh.tempF, 76.1);
+  ok('and the source is named', fresh.source === 'USGS' && /Manasquan/.test(fresh.name), JSON.stringify(fresh));
+  const stale = await run(24.5, 24 * 30);
+  ok('a reading a month old is refused, not shown as today',
+     !!stale.error && /old/.test(stale.error), JSON.stringify(stale));
+  const silly = await run(-5, 0.25);
+  ok('an implausible reading is refused rather than published',
+     !!silly.error, JSON.stringify(silly));
+  const ok48 = await run(20, 47);
+  ok('a reading within two days is still accepted', !ok48.error, JSON.stringify(ok48));
+  globalThis.fetch = realFetch3;
+}
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

@@ -326,6 +326,41 @@ async function fetchWaterTempNOAA(loc) {
   return { source: 'NOAA CO-OPS', station, name: loc.marine.coopsName, tempF: v, time: row.t || null };
 }
 
+/* USGS instantaneous values, parameter 00010 — water temperature.
+
+   NOAA's tide-gauge network is not the only one in the water. USGS runs inlet
+   and tidal-creek gauges that CO-OPS does not, and at Point Pleasant the
+   difference is decisive: the nearest CO-OPS sensor is Sandy Hook, 26 miles
+   north inside Raritan Bay, while USGS 01408048 sits 1.4 miles away at the
+   Manasquan inlet and reports every fifteen minutes. Checking one network and
+   concluding "nobody measures this" was the mistake; the search is in
+   scripts/investigate-coops.mjs and covers CO-OPS, NDBC and USGS. */
+async function fetchWaterTempUSGS(loc) {
+  const site = loc.marine && loc.marine.usgsStation;
+  if (!site) throw new Error('no USGS site configured');
+  const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site}`
+            + '&parameterCd=00010&siteStatus=active';
+  const j = await apiGet(url, { label: `USGS water temp — ${loc.marine.usgsName}`, retries: 1, timeout: 15000 });
+  const ts = j && j.value && j.value.timeSeries && j.value.timeSeries[0];
+  const row = ts && ts.values && ts.values[0] && ts.values[0].value && ts.values[0].value[0];
+  const c = row ? parseFloat(row.value) : NaN;
+  if (!Number.isFinite(c) || c < -50) throw new Error('no reading returned');
+  const v = c * 9 / 5 + 32;                     // USGS reports 00010 in Celsius
+  if (v < 25 || v > 105) throw new Error(`implausible reading ${v.toFixed(1)}°F`);
+  /* A gauge that stopped reporting years ago still answers this endpoint with
+     its last value, which would read as today's water temperature. */
+  const age = row.dateTime ? (Date.now() - Date.parse(row.dateTime)) / 3600000 : Infinity;
+  if (!(age < 48)) throw new Error(`last reading is ${Math.round(age)}h old`);
+  return { source: 'USGS', station: site, name: loc.marine.usgsName, tempF: v, time: row.dateTime || null };
+}
+
+/* Whichever network this home's gauge belongs to. */
+async function fetchWaterTemp(loc) {
+  return (loc.marine && loc.marine.usgsStation)
+    ? fetchWaterTempUSGS(loc)
+    : fetchWaterTempNOAA(loc);
+}
+
 /* -----------------------------------------------------------------------------
    LIVE MARINE — sea-surface temperature and waves at the offshore point.
    --------------------------------------------------------------------------- */
@@ -612,7 +647,7 @@ function clearOurCache() {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { API, apiGet, setPacing, coverage, ARCHIVE_MODEL, SEVERITY_RANK,
                      RateLimitError, isRateLimit, limitWindow, fetchAlerts, fetchLive,
-                     fetchNWSObservation, fetchWaterTempNOAA, fetchAir, fetchMarineLive, fetchArchive,
+                     fetchNWSObservation, fetchWaterTempNOAA, fetchWaterTempUSGS, fetchWaterTemp, fetchAir, fetchMarineLive, fetchArchive,
                      fetchMarineArchive, decadeChunks, mergeDaily, hourlyToDaily,
                      ARCHIVE_CORE, ARCHIVE_EXT, DIAG, cacheGet, cacheSet, cacheKey, clearOurCache };
 }
