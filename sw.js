@@ -11,15 +11,15 @@
 /* Both the cache name and the ?v= stamps below are written by
    scripts/stamp-assets.mjs from a hash of the shell's contents. Do not edit
    them by hand; test/globals.mjs fails if they are stale. */
-const CACHE = 'weather-d4ccfd2d9c';
+const CACHE = 'weather-47c47cdf1e';
 
 /* Must list every script index.html loads. test/globals.mjs asserts this:
    js/units.js was missing here once, which would have broken the installed
    app offline while working perfectly online. */
 const SHELL = [
   './', './index.html', './manifest.json', './icon.svg',
-  './js/config.js?v=d4ccfd2d9c', './js/units.js?v=d4ccfd2d9c', './js/solar.js?v=d4ccfd2d9c', './js/api.js?v=d4ccfd2d9c',
-  './js/climate.js?v=d4ccfd2d9c', './js/charts.js?v=d4ccfd2d9c', './js/radar.js?v=d4ccfd2d9c', './js/app.js?v=d4ccfd2d9c'
+  './js/config.js?v=47c47cdf1e', './js/units.js?v=47c47cdf1e', './js/solar.js?v=47c47cdf1e', './js/api.js?v=47c47cdf1e',
+  './js/climate.js?v=47c47cdf1e', './js/charts.js?v=47c47cdf1e', './js/radar.js?v=47c47cdf1e', './js/app.js?v=47c47cdf1e'
 ];
 
 /* Best-effort extras: nice to have offline, but their absence must not stop

@@ -38,6 +38,18 @@ const TH = {
    Atlantic season runs 1 Jun – 30 Nov. Counting days that reach those gust
    speeds is honest reporting of what the reanalysis actually saw — it is not
    a storm-track record, and the dashboard says so. */
+/* Measures that ACCUMULATE over a period rather than averaging over it: a
+   month has a total rainfall and a total number of hot days, but an average
+   high. Exported so the comparison view derives its "total vs average" choice
+   from this list rather than keeping a second copy. The two had already
+   drifted — the wind day-counts were summed here and averaged there, so gale
+   days read "1.1 avg" beside beach days reading a total. */
+const TOTAL_KEYS = ['precipTotal','rainfall','snowfall','precipHours','et0','wetDays',
+'heavyRainDays','dryDays','snowDays','sunnyDays','partlyDays','cloudyDays',
+'hot90','hot95','freeze32','freeze20','beachDays','pleasantDays',
+'breezyDays','strongWindDays','severeWindDays',
+'hdd','cdd','gdd'];
+
 const WIND = { breezy: 25, strong: 39, severe: 58, hurricane: 74 };
 const ATLANTIC_SEASON = [5, 6, 7, 8, 9, 10];        // Jun–Nov, zero-indexed
 
@@ -172,11 +184,6 @@ function aggregateMonthly(daily, sunClim) {
     });
   }
 
-  const TOTAL_KEYS = ['precipTotal','rainfall','snowfall','precipHours','et0','wetDays',
-                      'heavyRainDays','dryDays','snowDays','sunnyDays','partlyDays','cloudyDays',
-                      'hot90','hot95','freeze32','freeze20','beachDays','pleasantDays',
-                      'breezyDays','strongWindDays','severeWindDays',
-                      'hdd','cdd','gdd'];
 
   /* --- pass 3: assemble the 12 rows --------------------------------------- */
   const rows = [];
@@ -224,7 +231,11 @@ function aggregateMonthly(daily, sunClim) {
     /* spread, for the "typical range" band on the rainfall chart */
     const pv = yearRows.map(r => r.precipTotal).filter(isNum).sort((a, b) => a - b);
     row.precipP10 = pv.length ? pv[Math.floor(pv.length * 0.1)] : null;
-    row.precipP90 = pv.length ? pv[Math.min(pv.length - 1, Math.floor(pv.length * 0.9))] : null;
+    /* Nearest-rank 90th percentile. floor(n * 0.9) lands on the LAST element
+       whenever n is 10 — it returns the maximum, not a percentile, so this read
+       identically to wettestMonthOnRecord in all 36 published rows and the
+       tooltip printed the same figure twice under two different names. */
+    row.precipP90 = pv.length ? pv[Math.min(pv.length - 1, Math.ceil(pv.length * 0.9) - 1)] : null;
     row.wettestMonthOnRecord = pv.length ? pv[pv.length - 1] : null;
     row.driestMonthOnRecord  = pv.length ? pv[0] : null;
 
@@ -287,7 +298,13 @@ function frostStats(daily, threshold = 32) {
   if (!total) return null;
 
   const avg = a => a.length ? Math.round(mean(a)) : null;
-  const pct = a => a.length ? Math.round(a.slice().sort((x, y2) => x - y2)[Math.floor(a.length * 0.9)]) : null;
+  /* Same nearest-rank correction as precipP90. With ten years floor(9) is the
+     last element, so "9 years in 10 are frost-free by now" was really the
+     latest freeze ever recorded — a planting date a full year of risk later
+     than it claimed. */
+  const pct = a => a.length
+    ? Math.round(a.slice().sort((x, y2) => x - y2)[Math.min(a.length - 1, Math.ceil(a.length * 0.9) - 1)])
+    : null;
   return {
     threshold,
     yearsAnalysed: total,
@@ -465,7 +482,7 @@ function annualSummary(rows) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { aggregateMonthly, mergeSST, annualSummary, frostStats, yearlySeries,
+  module.exports = { TOTAL_KEYS, aggregateMonthly, mergeSST, annualSummary, frostStats, yearlySeries,
                      trendPerDecade, dayOfYear, doyToLabel, TH, WIND, ATLANTIC_SEASON,
                      MIN_DAYS_FOR_MONTH };
 }

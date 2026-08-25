@@ -50,9 +50,16 @@ console.log('\n\x1b[1mit fires when the pipeline really changes\x1b[0m');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'freshness-'));
 spawnSync('cp', ['-r', path.join(ROOT, 'js'), path.join(ROOT, 'scripts'),
                  path.join(ROOT, 'data'), tmp], { encoding: 'utf8' });
-const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'pipeline-version.mjs')],
-                            { encoding: 'utf8' });
-ok('the copied tree starts out current', run().status === 0, run().stdout.trim());
+const run = (...args) => spawnSync(process.execPath,
+  [path.join(tmp, 'scripts', 'pipeline-version.mjs'), ...args], { encoding: 'utf8' });
+
+/* Stamp the copy rather than assuming the committed data happens to be fresh.
+   It very often is not — a source change makes it stale immediately, which is
+   the whole point of the check — and a test whose precondition depends on that
+   fails for the right reason at the wrong time, which reads as a broken test
+   rather than a working guard. */
+run('--stamp');
+ok('a freshly stamped tree reads as current', run().status === 0, run().stdout.trim());
 
 const target = path.join(tmp, 'js', 'climate.js');
 fs.appendFileSync(target, '\n/* a change to how a number is computed */\n');
@@ -63,6 +70,7 @@ ok('and says so in words a person can act on',
 
 /* A change that cannot affect a number must NOT trip it, or it becomes noise. */
 fs.writeFileSync(target, fs.readFileSync(path.join(ROOT, 'js', 'climate.js')));
+run('--stamp');
 fs.appendFileSync(path.join(tmp, 'js', 'charts.js'), '\n/* a colour tweak */\n');
 ok('a change that cannot move a number does not trip it', run().status === 0, run().stdout.trim());
 fs.rmSync(tmp, { recursive: true, force: true });

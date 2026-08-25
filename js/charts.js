@@ -264,7 +264,13 @@ function rangeChart(svg, opts) {
    multiLine — the location-comparison chart. One measure, up to three homes.
    --------------------------------------------------------------------------- */
 function multiLine(svg, opts) {
-  const { series, labels, unit = '', dec = 1, height = 300, selected = -1, onClick = null } = opts;
+  /* valFmt renders a value wherever one is shown — the axis and the tooltip.
+     Without it a clock-time measure plotted its raw minutes-after-midnight, so
+     the axis read 400/800/1200 and the tooltip read "437". The comment at the
+     call site claimed these were "plotted but labelled as times"; nothing had
+     ever been passed to do the labelling. */
+  const { series, labels, unit = '', dec = 1, height = 300, selected = -1,
+          onClick = null, valFmt = null } = opts;
   const t = T();
   const W = chartWidth(svg), H = height;
   const PAD = { l: 46, r: 74, t: 34, b: 26 };   // right pad holds the end labels
@@ -291,7 +297,8 @@ function multiLine(svg, opts) {
 
   let hover = '';
   labels.forEach((_, i) => {
-    const rows = series.map(s => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px"></span>${esc(s.label)}: <b>${fmtVal(s.values[i], dec, unit)}</b>`).join('<br>');
+    const show = v => valFmt ? valFmt(v) : fmtVal(v, dec, unit);
+    const rows = series.map(s => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px"></span>${esc(s.label)}: <b>${show(s.values[i])}</b>`).join('<br>');
     hover += `<rect class="mark" x="${(PAD.l + step * i).toFixed(1)}" y="${PAD.t}" width="${step.toFixed(1)}" height="${plotH}"
       fill="transparent" data-i="${i}" data-tip="${esc(`<b>${labels[i]}</b><br>${rows}`)}" ${onClick ? 'style="cursor:pointer"' : ''}/>`;
   });
@@ -299,7 +306,7 @@ function multiLine(svg, opts) {
   svg.setAttribute('width', W); svg.setAttribute('height', H);
   svg.innerHTML =
       legend(series.map(s => ({ c: s.color, l: s.label })), PAD.l, 12)
-    + gridLayer(PAD.l, W - PAD.r, yOf, scale, dec >= 2 ? 1 : dec, W, H)
+    + gridLayer(PAD.l, W - PAD.r, yOf, scale, dec >= 2 ? 1 : dec, W, H, valFmt)
     + (selected >= 0 ? `<rect x="${(PAD.l + step * selected).toFixed(1)}" y="${PAD.t}" width="${step.toFixed(1)}" height="${plotH}" fill="${t.ink}" opacity="0.05"/>` : '')
     + paths + dots + endLabels
     + monthAxis(labels, xCenter, H - 8, selected)

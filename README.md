@@ -37,9 +37,11 @@ every day of the year, so a ranking that crowns it carries no information. A
 plain table lets you read the differences yourself.
 
 **📡 Live radar** — the National Weather Service RIDGE II loop for the radar
-station that actually covers each home, looked up from the NWS point service
+station that actually covers each home, chosen from a table of every WSR-88D
+site by which dish the house genuinely sits under
 rather than hard-coded. Refresh pulls new sweeps; clicking opens the full radar
-on weather.gov. On the all-homes view a picker switches between the three
+on weather.gov. The overview shows all three at once, side by side, rather
+than making you switch between the
 stations — north Jersey, coastal Carolina and southwest Florida are each served
 by a different dish.
 
@@ -58,7 +60,7 @@ peak UV, wind and gusts, sunrise, sunset, daylight and sunshine hours.
 **🕘 Next 48 hours** — temperature, chance of precipitation, wind speed and
 humidity, with night hours shaded.
 
-**📊 Monthly climate normals** — 20 KPI cards and **33 charts** across eight
+**📊 Monthly climate normals** — 21 KPI cards and **46 charts** across ten
 groups (35 for Rockaway, which gets the two snow charts), every one clickable and
 cross-linked to a focus month:
 
@@ -75,7 +77,7 @@ cross-linked to a focus month:
 | 📈 Year-by-year trends | mean temperature, daily high, daily low, precipitation, days ≥ 90°F, days ≤ 32°F, sunny days, snowfall — each with a least-squares slope per decade and an r² |
 | ⚡ Energy & growing | heating degree days · cooling degree days · growing degree days · evapotranspiration |
 
-**🔀 Compare all three homes** — pick any of the 48 measures and see all three
+**🔀 Compare all three homes** — pick any of the 51 measures and see all three
 homes on one axis, plus a side-by-side table with annual totals.
 
 **🌱 Frost dates & growing season** — average last spring freeze, first fall
@@ -83,7 +85,7 @@ freeze, the length of the season between them, and the date by which nine years
 in ten are frost-free. A home that never freezes says so instead of inventing a
 date.
 
-**🗂️ Monthly data table** — all 48 measures in 49 columns, sortable by any
+**🗂️ Monthly data table** — all 51 measures in 52 columns, sortable by any
 column, click a row to open that month. Exports to CSV with full provenance in
 the header.
 
@@ -94,18 +96,36 @@ and timing, so a missing chart is never a mystery.
 
 ## Where the numbers come from
 
-Nothing on this page is hand-entered. Everything is fetched live in your browser
-from [Open-Meteo](https://open-meteo.com/) — free, no API key, no account.
+Nothing on this page is hand-entered. The live feed is fetched in your browser
+from [Open-Meteo](https://open-meteo.com/) — free, no API key, no account. The
+monthly normals are built ahead of time and committed, because building them per
+visitor blew the free tier on a single page load.
+
+**Temperature, rainfall and snowfall are measurements, not model output.** They
+come from NOAA GHCN-Daily stations — and not one station per home, because
+thermometers are rare and rain gauges are everywhere: Rockaway's nearest
+thermometer is six miles off, its nearest rain gauge is 0.2 miles away in a
+volunteer's garden. Each measurement is taken from the nearest station that
+actually records it. Everything a station has no instrument for stays with the
+reanalysis, which is the right tool for a field rather than a point.
+
+Why this matters: a reanalysis is close on monthly averages and badly wrong on
+threshold counts. Measured against the station records over 2016–2025, ERA5 put
+Bonita Springs at **13 days a year at or above 90°F against a measured 80**, and
+Rockaway at 14 against 30. A 3°F bias barely moves an average and destroys a day
+count. See `scripts/stations.mjs` for the full argument and
+`scripts/investigate-hotdays.mjs` for the measurements behind it.
 
 | Feed | Source |
 |---|---|
 | Current conditions, hourly and 7-day forecast | Open-Meteo Forecast API |
-| Monthly normals | Open-Meteo Historical Weather API (ECMWF **ERA5** reanalysis) |
+| Monthly temperature, rainfall, snowfall | **NOAA GHCN-Daily station observations** (`scripts/stations.mjs`) |
+| Everything else in the normals (cloud, sunshine, humidity, wind, radiation) | Open-Meteo Historical Weather API (ECMWF **ERA5** reanalysis) |
 | Ocean temperature and waves | Open-Meteo Marine API |
 | Air quality | Open-Meteo Air Quality API (CAMS), US AQI scale |
 | Sunrise, sunset, solar noon, daylight | computed locally — NOAA solar equations |
 | Severe weather alerts | US National Weather Service (api.weather.gov) |
-| Radar | NWS RIDGE II loops, station resolved from the NWS point service |
+| Radar | NWS RIDGE II loops, station chosen geometrically from the WSR-88D table |
 | Water temperature | NOAA CO-OPS tide gauges — a physical sensor, preferred over the model |
 | Backup for current conditions | Nearest National Weather Service station observation |
 | Accuracy check | NOAA NCEI 1991–2020 station normals |
@@ -126,9 +146,13 @@ Building the normals in the browser meant every visitor paid:
 
 | normals window | per home | all three homes | vs 5,000/hour cap |
 |---|---|---|---|
-| 30 years | 1,837 | 5,510 | **110% — over** |
-| 15 years | 976 | 2,927 | 59% |
-| **10 years (default)** | **689** | **2,066** | **41%** |
+| 30 years | 1,722 | 5,166 | **103% — over** |
+| 15 years | 861 | 2,583 | 52% |
+| **10 years (default)** | **574** | **1,722** | **34%** |
+
+These come from `weightedCallsFor()` in `js/config.js`, which every estimate on
+the page also uses. Three hand-written copies of this arithmetic had drifted
+apart and quoted three different figures for the same request.
 
 The free tier allows 10,000 calls/day and **5,000/hour**. At the original
 30-year default a single page load blew the hourly cap and the dashboard
@@ -189,26 +213,48 @@ are one click away when the fuller record is what you want.
 
 ### How accurate is this, actually?
 
-ERA5 runs on a ~17 mile grid. A coastal cell mixes land and sea, which pulls
-summer maxima down — the first build had North Myrtle Beach at an 86°F July high
-against a published ~89°F, and 6 days a year over 90°F against a real 20–30.
+Temperature, rainfall and snowfall are station observations, so for those the
+honest answer is: as accurate as a NOAA thermometer a few miles from the house.
+The page names the station and its distance for each measurement.
 
-Rather than assume a fix, the project measures it. `scripts/validate-climate.mjs`
-compares three sources over the **identical** 1991–2020 window, so model bias is
-isolated from the real warming between periods:
+That is not where the project started. It started on ERA5 alone, and the
+reanalysis was fine on monthly averages and badly wrong on anything counted
+against a threshold. Measured over 2016–2025 against the station records:
 
-1. **NOAA NCEI monthly normals** — gauge observations, ground truth
-2. **Open-Meteo `era5`** — ~17 mile grid
-3. **Open-Meteo `era5_land`** — ~5.6 mile grid, land only
+| days ≥ 90°F per year | ERA5 said | stations measured |
+|---|---|---|
+| Rockaway, NJ | 14 | **30** |
+| North Myrtle Beach, SC | 24 | 19 |
+| Bonita Springs, FL | 13 | **80** |
 
-It reports the mean bias per home per variable and names which model sits closer,
-writing the result to `data/validation.json` for the dashboard to display. The
-archive requests ask for **ERA5-Land first** and fall back to ERA5 automatically
-if a variable is missing or coverage drops below 80% — a land-only model returns
-nulls over water, and that is better caught than published.
+Two of three homes wrong, one by a factor of six — and Rockaway's 14 is the
+more instructive case, because 14 hot days a year is a perfectly plausible
+number for New Jersey and nothing about it invited a second look. The cause is
+that a threshold turns a small bias into a large error whenever it sits inside
+the bulk of the distribution: ERA5's ~17 mile cell mixes land and sea, damping
+the daily maximum by a couple of degrees, which barely moves an average.
 
-The check runs in CI after every rebuild and never fails the build; a NOAA outage
-should not block a good climate refresh.
+No other model fixes it. `era5_land`, `era5_ensemble` and `ecmwf_ifs` all read
+colder still at every home. Moving the query point inland fixes Bonita
+spectacularly and ruins North Myrtle Beach, so it is a coincidence rather than a
+fix. `scripts/investigate-hotdays.mjs` has the measurements.
+
+The reanalysis is still measured against ground truth on every rebuild.
+`scripts/validate-climate.mjs` compares NOAA NCEI monthly normals, `era5` and
+`era5_land` over the **identical** 1991–2020 window, so model bias is isolated
+from the real warming between periods, and writes `data/validation.json`. The
+dashboard shows that comparison as the reason the model is not used for
+temperature — not as a warning about the figures on the page, which are
+measured.
+
+The check runs in CI after every rebuild and never fails the build; a NOAA
+outage should not block a good climate refresh.
+
+**What is still model output, and still carries model error:** cloud cover,
+sunshine and therefore sunny-day counts, humidity, dew point, wind, solar
+radiation, evapotranspiration and sea-surface temperature. ERA5's sunshine is
+threshold-based and reads optimistically; the sunny-day counts here should be
+treated as an upper bound rather than a measurement.
 
 ### Units
 
@@ -288,10 +334,15 @@ way everywhere rather than implying otherwise.
 | File | Purpose |
 |---|---|
 | `index.html` | Page structure and all styling |
-| `js/config.js` | Locations, the 48-measure catalogue, WMO weather codes |
+| `js/config.js` | Locations, the 51-measure catalogue, WMO weather codes |
 | `js/solar.js` | NOAA sunrise / sunset / solar-noon / daylight equations |
 | `js/api.js` | Open-Meteo access — retries, rate-limit backoff, chunking, diagnostics |
 | `scripts/build-climate.mjs` | Precomputes `data/climate.json` (run monthly by CI) |
+| `scripts/stations.mjs` | NOAA station selection and the observation merge — where temperature, rain and snow actually come from |
+| `scripts/pipeline-version.mjs` | Fingerprints the code that builds the data, so stale numbers can be detected |
+| `scripts/stamp-assets.mjs` | Content-hashes script URLs so a deploy is not served from cache |
+| `scripts/validate-climate.mjs` | Measures the reanalysis against NOAA normals → `data/validation.json` |
+| `js/radar.js` | WSR-88D site table and the geometry that picks each home's dish |
 | `data/climate.json` | The committed normals the dashboard actually reads |
 | `js/climate.js` | Turns raw daily records into monthly normals |
 | `js/charts.js` | Hand-rolled SVG charts (no chart library) |
@@ -301,7 +352,9 @@ way everywhere rather than implying otherwise.
 | `serve.py` | Local static server |
 | `test/globals.mjs` | Guards against two js/ files declaring the same global — they share one scope |
 | `test/units.mjs` | 49 assertions on every conversion factor, against NIST exact values |
-| `test/unit.mjs` | 94 assertions on the aggregation maths |
+| `test/unit.mjs` | 140 assertions on the aggregation maths |
+| `test/stations.mjs` | The observation merge: what a blank means, what a missing gauge means |
+| `test/freshness.mjs` | Catches published data that predates the code that builds it |
 | `test/audit.mjs` | Reads back every rendered value and checks its unit and plausible range |
 | `test/spot-check.mjs` | The real committed data against published climate values for these three places |
 | `test/crawl.mjs` | Exhaustive interaction crawl — every tab, every dropdown option, every button, every column, in light and dark, at three widths |

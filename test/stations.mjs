@@ -353,5 +353,74 @@ console.log('\n\x1b[1mdiscarding a reading that cannot have happened\x1b[0m');
      st.seen.snowfall_sum === 3, String(st.seen.snowfall_sum));
 }
 
+console.log('\n\x1b[1mfields the model cannot keep once the station is in\x1b[0m');
+/* Two fields describe the same quantity as the station's readings, by a
+   different instrument. Carried over untouched they contradict the numbers
+   beside them, and nothing about them LOOKS wrong. */
+{
+  const d = mkDaily(3);
+  d.temperature_2m_mean = d.time.map(() => 40);   // the model's answer
+  d.rain_sum = d.time.map(() => 9.9);             // the model's answer
+  const r = mergeStationDaily(d, station(d.time, {
+    temperature_2m_max: 90, temperature_2m_min: 70,
+    precipitation_sum: 2.0, snowfall_sum: 0 }));
+
+  ok('the model daily mean is dropped, not left between measured extremes',
+     d.temperature_2m_mean.every(v => v === null), JSON.stringify(d.temperature_2m_mean));
+  ok('so the aggregation falls through to the midpoint of the readings',
+     (90 + 70) / 2 === 80);
+  ok('rainfall is recomputed from the observed total, not left on the model',
+     d.rain_sum.every(v => v === 2.0), JSON.stringify(d.rain_sum));
+  ok('and both are reported as derived rather than as kept on the model',
+     r.derived.includes('temperature_2m_mean') && r.derived.includes('rain_sum'),
+     JSON.stringify(r.derived));
+}
+
+/* The invariant that broke: rain must never exceed the total it came out of. */
+{
+  const d = mkDaily(4);
+  d.rain_sum = d.time.map(() => 99);
+  mergeStationDaily(d, station(d.time, {
+    temperature_2m_max: 34, temperature_2m_min: 20,
+    precipitation_sum: 1.0, snowfall_sum: 5.0 }));
+  ok('a snowy day reports rain as the total minus the snow water equivalent',
+     d.rain_sum.every(v => Math.abs(v - 0.5) < 1e-9), JSON.stringify(d.rain_sum));
+  ok('rain never exceeds the precipitation it is part of',
+     d.rain_sum.every((v, i) => v <= d.precipitation_sum[i] + 1e-9));
+}
+{
+  /* More snow than the total can account for must not make rain negative. */
+  const d = mkDaily(2);
+  d.rain_sum = d.time.map(() => 5);
+  mergeStationDaily(d, station(d.time, {
+    temperature_2m_max: 30, temperature_2m_min: 18,
+    precipitation_sum: 0.2, snowfall_sum: 8.0 }));
+  ok('an inconsistent pair clamps rain at zero rather than going negative',
+     d.rain_sum.every(v => v === 0), JSON.stringify(d.rain_sum));
+}
+{
+  /* A day the station never reported has no total, so it has no rain either. */
+  const d = mkDaily(3);
+  d.rain_sum = d.time.map(() => 7);
+  d.temperature_2m_mean = d.time.map(() => 40);
+  mergeStationDaily(d, station([d.time[0]], {
+    temperature_2m_max: 80, temperature_2m_min: 60,
+    precipitation_sum: 1.0, snowfall_sum: 0 }));
+  ok('a day with no observed total reports no rain, rather than the model figure',
+     d.rain_sum[1] === null && d.rain_sum[2] === null, JSON.stringify(d.rain_sum));
+}
+{
+  /* A station with no thermometer must not have its model mean deleted. */
+  const d = mkDaily(2);
+  d.temperature_2m_mean = d.time.map(() => 55);
+  const st = station(d.time, { precipitation_sum: 0.3, snowfall_sum: 0 });
+  delete st.series.temperature_2m_max; delete st.series.temperature_2m_min;
+  const r = mergeStationDaily(d, st);
+  ok('a rain-only station leaves the model temperature mean intact',
+     d.temperature_2m_mean.every(v => v === 55), JSON.stringify(d.temperature_2m_mean));
+  ok('and does not claim to have derived it',
+     !r.derived.includes('temperature_2m_mean'), JSON.stringify(r.derived));
+}
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

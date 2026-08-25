@@ -1069,15 +1069,25 @@ function sourceNote() {
   const temp = src('temperature_2m_max');
   const rain = src('precipitation_sum');
   const snow = src('snowfall_sum');
+  /* Snow is a separate claim from rain. At North Myrtle Beach no station
+     reports it, so it stays on the model — and the old wording said "rain and
+     snow come from the same station" regardless, because the snow lookup
+     returned nothing and the sentence never checked. */
+  const snowSame = snow && rain && snow.id === rain.id;
+  const snowOnModel = !snow;
+  const snowLine = snowOnModel
+    ? ' Snowfall has no gauge near this home, so it stays with the model.'
+    : (snowSame ? '' : ` Snow comes from ${where(snow)}.`);
+
   let lines;
   if (temp && rain) {
     const same = rain.id === temp.id;
     lines = `The thermometer is ${where(temp)}, and it reported on
       ${esc(String(pct))}% of days in this period.
-      ${same ? 'Rain and snow come from the same station.'
-             : `Rain${snow && snow.id === rain.id ? ' and snow' : ''} come from
+      ${same ? `Rain${snowSame ? ' and snow' : ''} come${snowSame ? '' : 's'} from the same station.`
+             : `Rain${snowSame ? ' and snow' : ''} come from
                 ${where(rain)} — a gauge read by hand every morning, which is why
-                it can sit closer to the house than any thermometer.`}`;
+                it can sit closer to the house than any thermometer.`}${snowLine}`;
   } else {
     /* Older snapshots recorded a single station and no breakdown. */
     lines = `They come from NOAA station ${esc(st.id)} — ${esc(st.name)}, about
@@ -1117,6 +1127,13 @@ function accuracyNote() {
   const station = e.noaa ? e.noaa.stationId : 'the nearest station';
 
   if (measured) {
+    /* The bias is measured against whichever station publishes 1991–2020
+       normals, which is not always the station whose daily readings are on the
+       page. Where they differ, part of any gap is simply two different places,
+       and saying so is cheaper than letting it read as a trend. */
+    const st2 = c.meta.station;
+    const shownIds = new Set([st2 && st2.id, ...((st2 && st2.sources) || []).map(x => x.id)].filter(Boolean));
+    const sameSite = shownIds.has(station);
     return `<div class="banner info"><span class="bico">🎯</span><div>
       <b>Why the temperatures here are measured rather than modelled.</b>
       Over the same ${esc(v.window)} window, the ERA5 reanalysis differed from NOAA station
@@ -1125,7 +1142,10 @@ function accuracyNote() {
       A gap that size barely moves a monthly average but wrecks any count of days above
       or below a threshold, so the model is no longer used for temperature at all.
       <br><span style="color:var(--muted)">The figures on this page are the station's own
-      readings; the comparison above is what the model would have said instead.</span>
+      readings; the comparison above is what the model would have said instead.${
+        sameSite ? '' : ` Note that ${esc(station)} publishes the 30-year normals but is not
+        the station supplying the daily readings here, so some of that difference is two
+        different places rather than model error.`}</span>
       </div></div>`;
   }
 
@@ -1156,7 +1176,7 @@ function climateNotes(c) {
       <b>${noFile
         ? 'The precomputed normals file could not be loaded, so this was built live.'
         : 'This period is not in the precomputed set, so it was built live.'}</b>
-      That costs roughly ${PERIODS[S.period].years * 180} weighted Open-Meteo calls against a
+      That costs roughly ${weightedCallsFor(PERIODS[S.period].years)} weighted Open-Meteo calls against a
       5,000/hour free-tier cap, which is why it was slow. It is cached in this browser for 30 days.
       ${noFile
         ? 'See the Data sources panel below for what failed.'
@@ -1493,7 +1513,7 @@ function renderCompare() {
   $('compareNote').innerHTML = needsFetch
     ? `<span style="color:var(--muted)">${pending} home${pending === 1 ? '' : 's'} not in the
        precomputed set for this period — building them live costs about
-       ${1800 * pending} weighted API calls.</span>
+       ${weightedCallsFor(PERIODS[S.period].years) * pending} weighted API calls.</span>
        <button class="btn" id="btnLoadCompare" style="margin-left:8px">Load anyway</button>`
     : pending
       ? `Loading ${pending} more location${pending === 1 ? '' : 's'}…`
@@ -1526,8 +1546,11 @@ function renderCompare() {
     box.querySelector('#cmpSvg').outerHTML =
       `<div style="color:var(--muted);font-size:.82rem;padding:20px 0">No data for this measure at these locations.</div>`;
   } else if (m.unit === 'time') {
-    /* Clock times are minutes-after-midnight; plot them but label as times. */
+    /* Clock times are minutes-after-midnight. valFmt turns both the axis and
+       the tooltip back into clock times; without it the axis read 400/800/1200
+       and the tooltip read a bare "437". */
     multiLine($('cmpSvg'), { series, labels: MONTHS, unit: '', dec: 0, selected: S.month,
+      valFmt: v => fmtMinutes(Math.round(v)),
       onClick: i => selectMonth(i), height: 320 });
   } else {
     multiLine($('cmpSvg'), { series, labels: MONTHS, unit: m.unit, dec: m.dec, selected: S.month,
@@ -1539,10 +1562,15 @@ function renderCompare() {
   const annualOf = vals => {
     const nums = vals.filter(v => typeof v === 'number' && isFinite(v));
     if (!nums.length) return '—';
-    const isSum = ['precipTotal','rainfall','snowfall','precipHours','et0','wetDays','heavyRainDays',
-                   'dryDays','snowDays','sunnyDays','partlyDays','cloudyDays','hot90','hot95',
-                   'freeze32','freeze20','beachDays','pleasantDays','hdd','cdd','gdd'].includes(m.key);
+    /* One list, in climate.js, rather than a second copy that drifts from it.
+       The copy that used to live here had lost the three wind day-counts, so
+       gale-force days reported "1.1 avg" beside beach days reporting a total. */
+    const isSum = TOTAL_KEYS.includes(m.key);
     const v = isSum ? nums.reduce((a, b) => a + b, 0) : nums.reduce((a, b) => a + b, 0) / nums.length;
+    /* A clock time has no meaningful annual total, and fmtVal would print the
+       raw minutes-after-midnight with the word "time" appended — the Year
+       column literally read "437 time avg". */
+    if (m.unit === 'time') return `${fmtMinutes(Math.round(v))} avg`;
     return `${fmtVal(v, m.dec, m.unit)} ${isSum ? 'total' : 'avg'}`;
   };
 

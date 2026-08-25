@@ -74,6 +74,23 @@ export const STATION_FIELDS = {
   SNOW: 'snowfall_sum'
 };
 
+/* Fields the model supplies that become INVALID once the station's own
+   readings are in place, because they are derived from the same quantity by a
+   different instrument. Left alone, they read as if nothing had changed:
+
+   * temperature_2m_mean is ERA5's daily mean while the high and low beside it
+     are thermometer readings. The two disagreed by up to 1.8°F in opposite
+     directions per home, which silently corrupted every degree-day figure —
+     Bonita's cooling degree days were out by 11% — and the mean-temperature
+     trend chart plotted a model line between two measured ones.
+   * rain_sum is the model's rain while precipitation_sum is the station's
+     total. Different instruments, so the arithmetic breaks: North Myrtle Beach
+     published 52.12 in of rain inside 51.57 in of total precipitation, and
+     Bonita a 12.6 in gap in a place where nothing frozen falls.
+
+   Both are recomputed from the observations instead of being carried over. */
+const DERIVED_FROM_TEMPERATURE = ['temperature_2m_mean'];
+
 /* Candidates per home, NEAREST FIRST. Every field walks this one list and
    takes the first station that reported it, so the order is the whole policy:
    a nearer station always wins for the days it covers.
@@ -366,6 +383,10 @@ export function mergeStationDaily(daily, station) {
   const keys = all.filter(k => station.series[k] && station.series[k].size);
   const kept = all.filter(k => !keys.includes(k));
 
+  const tookTemp = keys.includes('temperature_2m_max') && keys.includes('temperature_2m_min');
+  const tookPrecip = keys.includes('precipitation_sum');
+  const derived = [];
+
   let replaced = 0, missing = 0;
   daily.time.forEach((t, i) => {
     let holes = 0;
@@ -374,7 +395,34 @@ export function mergeStationDaily(daily, station) {
       if (v === undefined) { daily[k][i] = null; holes++; }
       else daily[k][i] = v;
     }
+
+    /* The model's daily mean cannot sit between two measured extremes. Nulling
+       it makes the aggregation fall through to the midpoint of the readings
+       actually on the page, which is what every figure derived from it — the
+       degree days, the trend line — should have been using all along. */
+    if (tookTemp) {
+      for (const k of DERIVED_FROM_TEMPERATURE) {
+        if (Array.isArray(daily[k])) daily[k][i] = null;
+      }
+    }
+
+    /* Rainfall is total precipitation minus whatever fell frozen. GHCN reports
+       PRCP as liquid-equivalent and SNOW as depth, so the standard 10:1 ratio
+       converts one to the other. Approximate, and far better than pairing the
+       station's total with the model's rain: that produced more rain than
+       precipitation at two of the three homes. */
+    if (tookPrecip && Array.isArray(daily.rain_sum)) {
+      const pr = daily.precipitation_sum[i];
+      if (pr == null) daily.rain_sum[i] = null;
+      else {
+        const sn = keys.includes('snowfall_sum') ? daily.snowfall_sum[i] : null;
+        daily.rain_sum[i] = Math.max(0, pr - (sn != null ? sn / 10 : 0));
+      }
+    }
     if (holes) missing++; else replaced++;
   });
-  return { replaced, missing, fields: keys, kept };
+
+  if (tookTemp) derived.push(...DERIVED_FROM_TEMPERATURE.filter(k => Array.isArray(daily[k])));
+  if (tookPrecip && Array.isArray(daily.rain_sum)) derived.push('rain_sum');
+  return { replaced, missing, fields: keys, kept: kept.filter(k => !derived.includes(k)), derived };
 }

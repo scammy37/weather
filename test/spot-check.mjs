@@ -120,6 +120,39 @@ for (const [id, r] of Object.entries(REF)) {
      than reporting them honestly. */
   range('Jan avg low  ', rows[0].avgLow,  fromNoaa(0, 'tmin') || r.janLow, !nm);
   range('Jul avg low  ', rows[6].avgLow,  fromNoaa(6, 'tmin') || r.julLow, !nm);
+  /* ---- internal consistency ------------------------------------------
+     Every check above asks whether a number is plausible. None of them asks
+     whether the numbers agree with EACH OTHER, and that is how three defects
+     shipped past a green suite: rain exceeding total precipitation, a mean
+     temperature that was not the mean of the extremes beside it, and a "90th
+     percentile" that was the maximum. Each is one line to assert and none of
+     them needs a reference value, because the data contradicts itself. */
+  const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const bad = (label, test) => {
+    const hits = rows.map((row, i) => ({ m: M[i], row })).filter(({ row }) => test(row));
+    ok(`${label}${hits.length ? ` — ${hits.length} month${hits.length === 1 ? '' : 's'}` : ''}`,
+       hits.length === 0, hits.slice(0, 4).map(h => h.m).join(', '));
+  };
+  bad('rainfall never exceeds total precipitation',
+      w => w.rainTotal != null && w.precipTotal != null && w.rainTotal > w.precipTotal + 0.01);
+  bad('the mean temperature is the mean of the high and low',
+      w => w.avgMean != null && w.avgHigh != null && w.avgLow != null
+        && Math.abs(w.avgMean - (w.avgHigh + w.avgLow) / 2) > 0.5);
+  /* With ten years a 90th percentile must not BE the maximum, or it is a
+     maximum wearing a percentile's name. */
+  bad('the 90th-percentile month is below the wettest on record',
+      w => w.precipP90 != null && w.wettestMonthOnRecord != null
+        && w.sampleYears >= 10 && w.precipP90 >= w.wettestMonthOnRecord);
+  bad('snowfall never exceeds total precipitation as liquid',
+      w => w.snowfall != null && w.precipTotal != null && w.snowfall / 10 > w.precipTotal + 0.01);
+  ok(`annual rain ${a.annualRain == null ? '—' : a.annualRain.toFixed(1)} does not exceed annual precip ${a.annualPrecip.toFixed(1)}`,
+     a.annualRain == null || a.annualRain <= a.annualPrecip + 0.05,
+     'the two come from different instruments');
+  /* A place that never freezes cannot have snow, and vice versa. */
+  ok('snow and freezing days agree with each other',
+     !(a.annualSnow > 0.5 && a.annualFreeze === 0),
+     `${a.annualSnow} in of snow with ${a.annualFreeze} freezing days`);
+
   range('annual precip', a.annualPrecip,  r.precip);
   /* An explicit null here means the data went MISSING, which is a different
      failure from a wrong number and reads as "—" on the page. It shipped once:

@@ -98,6 +98,20 @@ const MONTHS_FULL = ['January','February','March','April','May','June',
 /* ---------------------------------------------------------------------------
    Normals periods. ERA5 lags real time by ~5 days, so end dates are fixed.
    ------------------------------------------------------------------------- */
+/* Open-Meteo weights a call as roughly (days / 14) x (variables / 10). One
+   home's normals for N years is the core variable set plus the extended one,
+   chunked by decade. Three copies of this arithmetic had drifted apart — the
+   README, the rebuild banner and the comparison banner each quoted a different
+   figure for the same request — so it lives here and every caller derives from
+   it. */
+const ARCHIVE_VARS_CORE = 17, ARCHIVE_VARS_EXT = 5;
+function weightedCallsFor(years) {
+  const chunks = Math.ceil(years / 10);
+  const daysPerChunk = (years / chunks) * 365.25;
+  const w = v => (daysPerChunk / 14) * (v / 10);
+  return Math.round(chunks * (w(ARCHIVE_VARS_CORE) + w(ARCHIVE_VARS_EXT)));
+}
+
 const PERIODS = {
   '2016-2025': { start: '2016-01-01', end: '2025-12-31', label: '2016–2025 (recent 10 years)',      years: 10 },
   '2011-2025': { start: '2011-01-01', end: '2025-12-31', label: '2011–2025 (recent 15 years)',      years: 15 },
@@ -228,6 +242,6 @@ function wmoInfo(code, isDay = 1) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { LOCATIONS, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
+  module.exports = { weightedCallsFor, LOCATIONS, MONTHS, MONTHS_FULL, PERIODS, DEFAULT_PERIOD,
                      SST_PERIOD, METRICS, METRIC_BY_KEY, GROUPS, WMO, wmoInfo };
 }
