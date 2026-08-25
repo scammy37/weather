@@ -357,7 +357,7 @@ function renderLive() {
   let ti = (daily.time || []).indexOf(todayISO);
   if (ti < 0) ti = Math.min(2, (daily.time || []).length - 1);
 
-  const sun = sunTimes(new Date(), l.lat, l.lon);
+  const sun = sunTimes(localCalendarDate(l.tz), l.lat, l.lon);
   const sunriseMin = localMinutes(sun.sunrise, l.tz), sunsetMin = localMinutes(sun.sunset, l.tz);
   const nowMin = localMinutes(new Date(), l.tz);
 
@@ -559,7 +559,7 @@ function renderQuickReference(host) {
     const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: l.tz });
     let ti = (daily.time || []).indexOf(todayISO);
     if (ti < 0) ti = Math.min(2, (daily.time || []).length - 1);
-    const sun = sunTimes(new Date(), l.lat, l.lon);
+    const sun = sunTimes(localCalendarDate(l.tz), l.lat, l.lon);
     const mc = d && d.marine && d.marine.current;
     const w = waterTemp(l, d);
     const waterF = w ? w.tempF : null;
@@ -645,7 +645,7 @@ function renderOverview(host) {
     let ti = (daily.time || []).indexOf(todayISO);
     if (ti < 0) ti = Math.min(2, (daily.time || []).length - 1);
 
-    const sun = sunTimes(new Date(), l.lat, l.lon);
+    const sun = sunTimes(localCalendarDate(l.tz), l.lat, l.lon);
     const riseMin = localMinutes(sun.sunrise, l.tz), setMin = localMinutes(sun.sunset, l.tz);
     const nowMin = localMinutes(new Date(), l.tz);
     const poles = isDark() ? TEMP_POLES.dark : TEMP_POLES.light;

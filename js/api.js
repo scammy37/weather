@@ -249,10 +249,18 @@ async function fetchAlerts(loc) {
     };
   })
   /* Most severe first, so the worst thing is the thing you read. */
-  .sort((a, b) => SEVERITY_RANK.indexOf(a.severity) - SEVERITY_RANK.indexOf(b.severity));
+  .sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
 }
 
 const SEVERITY_RANK = ['Extreme', 'Severe', 'Moderate', 'Minor', 'Unknown'];
+/* An unrecognised severity must sort LAST, not first. Bare indexOf returns -1
+   for anything off the list, and -1 sorts ahead of Extreme (index 0) — so a
+   garbled or newly-invented severity would outrank a hurricane warning and be
+   the headline. Unknown ranks below Minor and truly unknown ranks below that. */
+function severityRank(sev) {
+  const i = SEVERITY_RANK.indexOf(sev);
+  return i === -1 ? SEVERITY_RANK.length : i;
+}
 
 /* -----------------------------------------------------------------------------
    BACKUP SOURCE 1 — National Weather Service current observations.
@@ -645,7 +653,7 @@ function clearOurCache() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { API, apiGet, setPacing, coverage, ARCHIVE_MODEL, SEVERITY_RANK,
+  module.exports = { API, apiGet, setPacing, coverage, ARCHIVE_MODEL, SEVERITY_RANK, severityRank,
                      RateLimitError, isRateLimit, limitWindow, fetchAlerts, fetchLive,
                      fetchNWSObservation, fetchWaterTempNOAA, fetchWaterTempUSGS, fetchWaterTemp, fetchAir, fetchMarineLive, fetchArchive,
                      fetchMarineArchive, decadeChunks, mergeDaily, hourlyToDaily,

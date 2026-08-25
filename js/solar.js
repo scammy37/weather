@@ -57,6 +57,19 @@ function hourAngle(latDeg, declDeg, zenith = 90.833) {
   return Math.acos(cosH) * R2D;
 }
 
+/* The location's own calendar day, as a Date whose UTC Y/M/D fields hold the
+   LOCAL date in `tz`. sunTimes reads Y/M/D in UTC, so passing a bare `new
+   Date()` computed tomorrow's sun times after ~8pm Eastern — once the instant
+   crosses midnight UTC, its UTC date is already the next day. Deriving the date
+   in the home's own zone is what the sun tiles actually mean by "today". */
+function localCalendarDate(tz, at = new Date()) {
+  /* en-CA renders as YYYY-MM-DD; sv-SE would too. Either gives the local date
+     without having to parse a localized month name. */
+  const iso = at.toLocaleDateString('en-CA', { timeZone: tz });
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
 /* Sun event times for a calendar date at a location.
    `date` is interpreted as a calendar day (Y/M/D taken in UTC).
    Returns UTC Date objects plus daylight length in minutes. */
@@ -189,6 +202,6 @@ function dailySunCurve(lat, lon, tz, refYear = 2025, step = 1) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { julianDay, sunTimes, civilTwilight, localMinutes, fmtMinutes,
+  module.exports = { julianDay, sunTimes, civilTwilight, localMinutes, fmtMinutes, localCalendarDate,
                      fmtDuration, monthlySunClimatology, dailySunCurve, hourAngle };
 }

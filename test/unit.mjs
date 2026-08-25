@@ -512,5 +512,49 @@ console.log('\n\x1b[1mUSGS water temperature\x1b[0m');
   globalThis.fetch = realFetch3;
 }
 
+console.log('\n\x1b[1mthe sun date is the location, not UTC\x1b[0m');
+/* The bug: sunTimes reads Y/M/D in UTC, so a bare `new Date()` computed
+   TOMORROW's sun times after ~8pm Eastern, when the instant has crossed
+   midnight UTC. localCalendarDate derives the day in the home's own zone. */
+{
+  /* 00:30 UTC on Aug 25 is 8:30pm EDT on Aug 24 — the failing window. */
+  const instant = new Date('2026-08-25T00:30:00Z');
+  const local = solar.localCalendarDate('America/New_York', instant);
+  eq('the local date is the 24th, not the UTC 25th', local.getUTCDate(), 24);
+  eq('and the month is August', local.getUTCMonth(), 7);
+
+  const sunLocal = solar.sunTimes(local, 40.90, -74.51);
+  const sunUTC   = solar.sunTimes(instant, 40.90, -74.51);   // the old, wrong call
+  /* Sunset on the 24th and the 25th differ by a minute or two; the point is
+     they are DIFFERENT days, and the local one is the right one. */
+  const dayOf = t => new Date(t.getTime()).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  eq('the local-date sunset falls on the 24th', +dayOf(sunLocal.sunset).slice(-2), 24);
+  eq('the raw-UTC sunset falls on the 25th — the bug', +dayOf(sunUTC.sunset).slice(-2), 25);
+}
+{
+  /* Midday, when UTC and Eastern share a date, must be unaffected. */
+  const noonish = new Date('2026-08-24T16:00:00Z');   // noon EDT
+  const local = solar.localCalendarDate('America/New_York', noonish);
+  eq('a midday instant keeps the same date', local.getUTCDate(), 24);
+}
+
+console.log('\n\x1b[1malert severity ordering\x1b[0m');
+/* An unrecognised severity must never outrank Extreme. Bare indexOf returned
+   -1 for anything off the list, and -1 sorts first. */
+{
+  const r = api2.severityRank;
+  ok('Extreme is rank 0', r('Extreme') === 0);
+  ok('the known order holds', r('Extreme') < r('Severe') && r('Severe') < r('Moderate')
+     && r('Moderate') < r('Minor') && r('Minor') < r('Unknown'));
+  ok('a garbled severity sorts AFTER Extreme, not before',
+     r('WeatherBotSaysRun') > r('Extreme'), String(r('WeatherBotSaysRun')));
+  ok('and after every known level', r('WeatherBotSaysRun') >= r('Unknown'));
+  ok('a missing severity is handled too', r(undefined) > r('Extreme') && r(null) > r('Extreme'));
+  /* The actual sort: a real list with an unknown severity in front. */
+  const sorted = [{ severity: 'Nonsense' }, { severity: 'Extreme' }, { severity: 'Minor' }]
+    .sort((a, b) => r(a.severity) - r(b.severity));
+  eq('Extreme leads the sorted list, not the nonsense value', sorted[0].severity === 'Extreme' ? 1 : 0, 1);
+}
+
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);
