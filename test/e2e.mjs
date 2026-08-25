@@ -1029,8 +1029,19 @@ async function main() {
      nmbNote.includes('+0.4°F on daily highs'), nmbNote.slice(0, 200));
   ok('it states the measured low bias, which is the large one',
      nmbNote.includes('+3.9°F'), nmbNote.slice(0, 200));
-  ok('a low bias above 2°F is explained, not just printed',
-     /gridded model/.test(nmbNote));
+  /* Which of the two framings appears depends on whether this home's figures
+     actually came from a station. Both must be internally consistent: the page
+     must never claim the temperatures are measured AND that they are biased. */
+  const measured = /measured rather than modelled/.test(nmbNote);
+  ok('the disclosure matches where the temperatures actually came from',
+     measured !== /Treat the low temperatures as a few degrees optimistic/.test(nmbNote),
+     nmbNote.slice(0, 240));
+  ok('when the figures are measured, the page does not also call them biased',
+     !measured || !/Treat the low temperatures/.test(nmbNote), nmbNote.slice(0, 240));
+  ok('and it still explains why the model was rejected',
+     !measured || /wrecks any count of days/.test(nmbNote), nmbNote.slice(0, 240));
+  ok('when they are modelled, the warm bias is still spelled out',
+     measured || /gridded model/.test(nmbNote), nmbNote.slice(0, 240));
   ok('the comparison window is stated, so it is not mistaken for our period',
      nmbNote.includes('1991–2020'));
 

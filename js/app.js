@@ -1095,19 +1095,46 @@ function sourceNote() {
     barely and a threshold enormously.</span></div></div>`;
 }
 
+/* What the model would have said, next to what the thermometer says.
+
+   This panel used to tell the reader to treat the low temperatures as a few
+   degrees optimistic. That was true while the temperatures came from the
+   reanalysis, and became false the moment they came from a station — leaving
+   the page asserting both that the figures are measured and that they are
+   biased. Two panels contradicting each other is worse than either alone, so
+   the same measurement is now framed as the evidence it actually is: the
+   reason the temperatures are not taken from the model any more. */
 function accuracyNote() {
   const v = VALIDATION;
   const l = loc();
   const e = v && v.homes && v.homes[l.id];
   const b = e && e.models && e.models.era5 && e.models.era5.vsNoaa;
   if (!b || !b.tmax || !b.tmin) return '';
+  const c = curClim();
+  const st = c && c.meta && c.meta.station;
+  const measured = !!(st && (st.fields || []).some(f => f.startsWith('temperature')));
   const sign = n => (n >= 0 ? '+' : '') + n.toFixed(1);
   const station = e.noaa ? e.noaa.stationId : 'the nearest station';
+
+  if (measured) {
+    return `<div class="banner info"><span class="bico">🎯</span><div>
+      <b>Why the temperatures here are measured rather than modelled.</b>
+      Over the same ${esc(v.window)} window, the ERA5 reanalysis differed from NOAA station
+      ${esc(station)} by <b>${esc(sign(b.tmax.meanBias))}°F</b> on daily highs and
+      <b>${esc(sign(b.tmin.meanBias))}°F</b> on overnight lows.
+      A gap that size barely moves a monthly average but wrecks any count of days above
+      or below a threshold, so the model is no longer used for temperature at all.
+      <br><span style="color:var(--muted)">The figures on this page are the station's own
+      readings; the comparison above is what the model would have said instead.</span>
+      </div></div>`;
+  }
+
   return `<div class="banner info"><span class="bico">🎯</span><div>
     <b>How close these figures are to a real thermometer.</b>
-    Measured against NOAA station ${esc(station)} over the same ${esc(v.window)} window,
-    this reanalysis runs <b>${esc(sign(b.tmax.meanBias))}°F</b> on daily highs and
-    <b>${esc(sign(b.tmin.meanBias))}°F</b> on overnight lows.
+    No station could be used for this home, so the temperatures come from the ERA5
+    reanalysis. Measured against NOAA station ${esc(station)} over the same
+    ${esc(v.window)} window, it runs <b>${esc(sign(b.tmax.meanBias))}°F</b> on daily highs
+    and <b>${esc(sign(b.tmin.meanBias))}°F</b> on overnight lows.
     ${b.tmin.meanBias > 2 ? `The warm bias in the lows is inherent to a gridded model —
       it averages over an area and smooths away the overnight cooling a thermometer
       in a field records. Treat the low temperatures as a few degrees optimistic.` : ''}
