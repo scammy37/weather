@@ -44,7 +44,10 @@ function synth(years = [2023, 2024]) {
       d.shortwave_radiation_sum.push(18);                    // MJ/m² → 5 kWh/m²
       d.et0_fao_evapotranspiration.push(0.1);
       d.relative_humidity_2m_mean.push(70); d.dew_point_2m_mean.push(50);
-      d.cloud_cover_mean.push(40); d.pressure_msl_mean.push(1016);
+      /* Sky cover drives the sunny/partly/cloudy split. Jan clear, Feb split
+         by odd/even day, Mar solidly partly cloudy. */
+      d.cloud_cover_mean.push(mo === 0 ? 10 : (mo === 1 ? (day % 2 ? 5 : 90) : 55));
+      d.pressure_msl_mean.push(1016);
     }
   }
   return d;
@@ -69,7 +72,7 @@ eq('solar kWh/m² (18 MJ ÷ 3.6)', jan.solarKwh, 5);
 eq('Jan mean wind', jan.windSpeed, 10);
 eq('Jan peak gust', jan.windGust, 30);
 eq('Jan humidity', jan.humidity, 70);
-eq('Jan cloud cover', jan.cloudCover, 40);
+eq('Jan cloud cover', jan.cloudCover, 10);
 eq('Jan pressure inHg (1016 hPa)', jan.pressure, 1016 * 0.02953, 1e-6);
 
 console.log('\n\x1b[1maggregateMonthly — total metrics (per-year sums, averaged)\x1b[0m');
@@ -88,13 +91,43 @@ eq('Mar wet days (0.01 < 0.04)', mar.wetDays, 0);
 eq('Mar dry days (all 31)', mar.dryDays, 31);
 
 console.log('\n\x1b[1msunny / partly / cloudy classification\x1b[0m');
-eq('Jan sunny days (ratio 0.80 ≥ 0.70)', jan.sunnyDays, 31);
+/* Classified by CLOUD COVER on the published convention — 0-3 tenths clear,
+   4-7 partly, 8-10 cloudy — not by sunshine duration. ERA5's sunshine is
+   generous enough that the old definition put Bonita Springs at 317 sunny days
+   a year against 14.7 cloudy ones, which is not a climate that exists. */
+eq('Jan sunny days (10% cloud ≤ 30)', jan.sunnyDays, 31);
 eq('Jan cloudy days', jan.cloudyDays, 0);
 /* 2023 Feb has 28 days (14 odd), 2024 Feb has 29 (15 odd) → mean 14.5.
    The half-day is the leap year showing through, and is correct. */
-eq('Feb sunny days (leap-aware mean of 14 and 15)', feb.sunnyDays, 14.5);
-eq('Feb cloudy days (ratio 0.10 < 0.35)', feb.cloudyDays, 14);
-eq('Mar partly days (ratio 0.50)', mar.partlyDays, 31);
+eq('Feb sunny days (5% cloud on odd days)', feb.sunnyDays, 14.5);
+eq('Feb cloudy days (90% cloud ≥ 80)', feb.cloudyDays, 14);
+eq('Mar partly days (55% cloud, between the two)', mar.partlyDays, 31);
+ok('the split came from cloud cover, not the sunshine fallback',
+   jan.skyFromSunshine === 0, String(jan.skyFromSunshine));
+
+/* The boundaries themselves, since "sunny" is a claim a reader will check. */
+{
+  const edge = synth([2023]);
+  edge.cloud_cover_mean = edge.time.map(() => 30);   // exactly clear
+  const r0 = aggregateMonthly(edge, sunClim);
+  eq('30% cloud counts as clear, not partly', r0[0].sunnyDays, 31);
+  edge.cloud_cover_mean = edge.time.map(() => 31);
+  eq('31% does not', aggregateMonthly(edge, sunClim)[0].sunnyDays, 0);
+  edge.cloud_cover_mean = edge.time.map(() => 80);
+  eq('80% cloud counts as cloudy', aggregateMonthly(edge, sunClim)[0].cloudyDays, 31);
+  edge.cloud_cover_mean = edge.time.map(() => 79);
+  eq('79% is still partly', aggregateMonthly(edge, sunClim)[0].partlyDays, 31);
+}
+
+/* Cloud cover is an extended variable and can be absent on its own. */
+{
+  const noCloud = synth([2023]);
+  noCloud.cloud_cover_mean = noCloud.time.map(() => null);
+  const r1 = aggregateMonthly(noCloud, sunClim)[0];
+  ok('with no cloud cover the split falls back to sunshine rather than vanishing',
+     r1.sunnyDays != null && r1.sunnyDays > 0, String(r1.sunnyDays));
+  eq('and the fallback is reported in full', r1.skyFromSunshine, 1);
+}
 ok('sunny + partly + cloudy = mean days in month (28.5 with leap year)',
    near(feb.sunnyDays + feb.partlyDays + feb.cloudyDays, 28.5, 1e-9),
    `${feb.sunnyDays}+${feb.partlyDays}+${feb.cloudyDays}`);

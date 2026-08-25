@@ -23,7 +23,11 @@ const TH = {
   wetDay:       0.04,   // the WMO "rain day" convention, in inches
   heavyRainDay: 1.00,
   snowDay:      0.10,
-  sunnyRatio:   0.70,   // sunshine ÷ daylight
+  /* Sky cover in tenths, the convention the published clear/partly/cloudy day
+     counts use: 0–3 clear, 4–7 partly cloudy, 8–10 cloudy. */
+  clearSky:     30,     // % mean cloud cover
+  cloudySky:    80,
+  sunnyRatio:   0.70,   // sunshine ÷ daylight — the fallback when cloud cover is absent
   partlyRatio:  0.35,
   hot:          90,
   veryHot:      95,
@@ -120,7 +124,7 @@ function aggregateMonthly(daily, sunClim) {
     let hot = 0, veryHot = 0, freeze = 0, hard = 0, beach = 0, pleasant = 0;
     let breezy = 0, strongWind = 0, severeWind = 0;
     let hdd = 0, cdd = 0, gdd = 0;
-    let nPrecip = 0, nSun = 0, nTemp = 0;
+    let nPrecip = 0, nSun = 0, nTemp = 0, nSunFallback = 0;
 
     for (const i of idxs) {
       const p = precip[i], r = rain[i], sn = snow[i];
@@ -132,8 +136,34 @@ function aggregateMonthly(daily, sunClim) {
 
       const dl = daylight[i], ss = sunshine[i];
       let ratio = null;
-      if (isNum(dl) && dl > 0 && isNum(ss)) {
-        ratio = Math.min(1, ss / dl);
+      if (isNum(dl) && dl > 0 && isNum(ss)) ratio = Math.min(1, ss / dl);
+
+      /* Sky category from CLOUD COVER, not from sunshine duration.
+
+         ERA5's sunshine_duration counts every hour whose direct beam clears a
+         threshold, and over these locations it is systematically generous: on
+         that definition Bonita Springs came out at 317 sunny days a year with
+         14.7 cloudy ones, which is not a climate that exists anywhere.
+
+         Cloud cover is an analysed field rather than a derived threshold, and
+         the boundaries below are the ones the published "clear / partly cloudy
+         / cloudy days" figures use — sky cover 0–3 tenths clear, 4–7 partly,
+         8–10 cloudy. That makes these counts comparable to the numbers a
+         reader would check them against, which the old ones were not.
+
+         Sunshine duration is still used for pctSun and for the beach-day test,
+         where a ratio of the day's own daylight is the right question. */
+      const cc = cloud[i];
+      if (isNum(cc)) {
+        nSun++;
+        if (cc <= TH.clearSky) sunny++;
+        else if (cc < TH.cloudySky) partly++;
+        else cloudy++;
+      } else if (ratio != null) {
+        /* No cloud cover for this day — the extended variable set can fail
+           independently. Fall back rather than reporting nothing, and record
+           that it happened. */
+        nSunFallback++;
         nSun++;
         if (ratio >= TH.sunnyRatio) sunny++;
         else if (ratio >= TH.partlyRatio) partly++;
@@ -172,11 +202,18 @@ function aggregateMonthly(daily, sunClim) {
       et0:         nEt0  ? et0Sum  : null,
       wetDays: nPrecip ? wet : null,
       heavyRainDays: nPrecip ? heavy : null,
-      dryDays: nPrecip ? days - wet : null,
+      /* Days with a reading and no rain — NOT "the month minus the wet days",
+         which quietly counted every day the gauge was silent as a dry one. */
+      dryDays: nPrecip ? (nPrecip - wet) * days / nPrecip : null,
       snowDays: nSnow ? snowD : null,
       sunnyDays:  nSun ? sunny  * days / nSun : null,   // scale to a full month
       partlyDays: nSun ? partly * days / nSun : null,
       cloudyDays: nSun ? cloudy * days / nSun : null,
+      /* How much of the sky classification fell back to sunshine duration
+         because cloud cover was unavailable. Zero is the expected case; a
+         large share means the counts are on the optimistic definition again
+         and should not be compared against published figures. */
+      skyFromSunshine: nSun ? nSunFallback / nSun : null,
       hot90: hot, hot95: veryHot, freeze32: freeze, freeze20: hard,
       beachDays: beach, pleasantDays: pleasant,
       breezyDays: breezy, strongWindDays: strongWind, severeWindDays: severeWind,
@@ -227,6 +264,14 @@ function aggregateMonthly(daily, sunClim) {
     for (const k of TOTAL_KEYS) {
       const vals = yearRows.map(r => r[k]).filter(isNum);
       row[k] = vals.length ? mean(vals) : null;
+    }
+    /* Not a total — a share, averaged over the years. It says how much of the
+       sky classification had to fall back to sunshine duration because cloud
+       cover was missing, which is the difference between a figure comparable
+       to published clear-day counts and one that is not. */
+    {
+      const f = yearRows.map(r => r.skyFromSunshine).filter(isNum);
+      row.skyFromSunshine = f.length ? mean(f) : null;
     }
     /* spread, for the "typical range" band on the rainfall chart */
     const pv = yearRows.map(r => r.precipTotal).filter(isNum).sort((a, b) => a - b);

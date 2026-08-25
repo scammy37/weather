@@ -764,6 +764,23 @@ async function main() {
   console.log('\n\x1b[1m18e. Backup data sources\x1b[0m');
   ok('the measured water temperature is preferred over the model',
      statTxt.includes('measured at'), statTxt.slice(statTxt.indexOf('Water temp'), statTxt.indexOf('Water temp') + 90));
+  /* Rockaway is the exception, and it is a stated one: NOAA has no
+     water-temperature sensor at Point Pleasant, so the ocean figure there is
+     the marine model AT Point Pleasant rather than a gauge 26 miles north in
+     Raritan Bay. The page must say which it is showing. */
+  await page.click('.tab[data-id="rockaway"]');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
+  const rockTxt = await page.textContent('#liveHost');
+  ok('Rockaway shows the ocean at Point Pleasant, not the Sandy Hook gauge',
+     /marine model at Point Pleasant/.test(rockTxt),
+     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 160));
+  ok('and still names the nearest real sensor alongside it',
+     /nearest sensor/.test(rockTxt) || /Sandy Hook/.test(rockTxt),
+     rockTxt.slice(rockTxt.indexOf('Water'), rockTxt.indexOf('Water') + 160));
+  ok('the ocean distance is the measured 61 miles, not the old 55',
+     !/55 mi/.test(rockTxt), rockTxt.slice(0, 200));
+  await page.click('.tab[data-id="nmb"]');
+  await page.waitForSelector('.now-temp', { timeout: 15000 });
   ok('the model is shown against the gauge as a cross-check',
      statTxt.includes('Model vs gauge'));
   ok('the sources panel names the tide gauge', diagTxt.includes('NOAA CO-OPS'));

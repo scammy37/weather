@@ -26,12 +26,25 @@ const LOCATIONS = [
     emoji: '🍂',
     blurb: 'Morris County highlands — humid continental (Köppen Dfa)',
     marine: {
+      /* Just off Point Pleasant Beach — 5.2 miles offshore of it, and 61 miles
+         from the house. The old figure said 55; nothing was 55 miles from
+         anything. Distances here are measured, not remembered. */
       lat: 40.08,
       lon: -73.95,
       proxy: true,
       proxyName: 'Point Pleasant Beach',
-      proxyDistanceMi: 55,
-      label: 'Atlantic Ocean — off Point Pleasant Beach (nearest coast, ~55 mi)',
+      proxyDistanceMi: 61,
+      label: 'Atlantic Ocean — off Point Pleasant Beach (nearest ocean, 61 mi)',
+      /* NOAA has NO water-temperature sensor at Point Pleasant. Of the 239
+         CO-OPS stations that report one, the nearest is Sandy Hook, 26 miles
+         north of Point Pleasant and inside Raritan Bay; everything after that
+         is the Delaware River or New York Harbour, which are estuaries rather
+         than ocean. So the ocean temperature shown for this home is the marine
+         model AT Point Pleasant, and the Sandy Hook gauge is displayed beside
+         it as corroboration rather than as the headline figure — the reverse
+         of the other two homes, where a real sensor sits in the water being
+         described. `scripts/investigate-coops.mjs` re-runs that search. */
+      preferGauge: false,
       body: 'Atlantic Ocean',
       coopsStation: '8531680', coopsName: 'Sandy Hook, NJ'
     }
@@ -57,6 +70,7 @@ const LOCATIONS = [
       body: 'Atlantic Ocean',
       /* NOAA CO-OPS tide gauge with a water-temperature sensor: a real
          thermometer in the water, used to cross-check the marine model. */
+      preferGauge: true,
       coopsStation: '8661070', coopsName: 'Springmaid Pier, SC'
     }
   },
@@ -79,6 +93,7 @@ const LOCATIONS = [
       proxy: false,
       label: 'Gulf of Mexico — offshore Bonita Beach',
       body: 'Gulf of Mexico',
+      preferGauge: true,
       coopsStation: '8725110', coopsName: 'Naples Bay, FL'
     }
   }

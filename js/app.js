@@ -32,6 +32,32 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const isAll = () => S.locId === ALL;
 /* Falls back to the first home so anything that needs a concrete location
    (time zone, coordinates) still has one while the overview is showing. */
+/* Which water temperature to show, and what to call it.
+
+   Two of the three homes have a NOAA sensor sitting in the water being
+   described, and a real thermometer beats a model every time. Rockaway does
+   not: NOAA has no water-temperature station at Point Pleasant, and the
+   nearest one is 26 miles north inside Raritan Bay. There the marine model at
+   Point Pleasant is the better answer to "how warm is the ocean at my beach",
+   and the gauge is corroboration. config.js carries the choice per home so it
+   is a stated decision rather than an accident of which value was truthy. */
+function waterTemp(l, d) {
+  const gauge = d && d.water && isFiniteNum(d.water.tempF) ? d.water : null;
+  const mc = d && d.marine && d.marine.current;
+  const model = mc && typeof mc.sea_surface_temperature === 'number'
+    ? mc.sea_surface_temperature : null;
+  const preferGauge = l.marine.preferGauge !== false;
+  if (preferGauge && gauge) return { tempF: gauge.tempF, from: `measured at ${gauge.name}`, gauge, model };
+  if (model != null) {
+    return { tempF: model,
+             from: `marine model at ${l.marine.proxyName || l.short}`
+                 + (gauge ? ` · nearest sensor ${gauge.name}, ${Math.round(gauge.tempF)}°F` : ''),
+             gauge, model };
+  }
+  if (gauge) return { tempF: gauge.tempF, from: `measured at ${gauge.name}`, gauge, model };
+  return null;
+}
+
 const loc = id => LOCATIONS.find(l => l.id === (id || S.locId)) || LOCATIONS[0];
 const climKey = (id, p) => `${id}|${p}`;
 const curClim = () => S.clim[climKey(S.locId, S.period)] || null;
@@ -398,13 +424,16 @@ function renderLive() {
   /* --- ocean --- */
   const m = l.marine, mc = d.marine && d.marine.current;
   const gauge = d.water;                       /* `w` is the weather code above */
+  /* waterTemp() decides which source leads, per home. Reading d.water directly
+     here made this tile disagree with the same figure on the overview card. */
+  const wt = waterTemp(l, d);
   const oceanTiles = mc ? [
-    ['Water temp',  fmtNum(gauge ? gauge.tempF : mc.sea_surface_temperature, 1) + '°F',
-      gauge ? `measured at ${gauge.name}` : swimLabel(mc.sea_surface_temperature)],
+    ['Water temp',  fmtNum(wt ? wt.tempF : mc.sea_surface_temperature, 1) + '°F',
+      wt ? wt.from : swimLabel(mc.sea_surface_temperature)],
     ['Wave height', fmtNum(mc.wave_height, 1) + ' ft',            'Significant height'],
     ['Wave period', fmtNum(mc.wave_period, 1) + ' s',             'Between crests'],
     ['Swell from',  degToCompass(mc.wave_direction),              `${fmtNum(mc.wave_direction, 0)}°`]
-  ] : (d.water ? [['Water temp', `${fmtNum(d.water.tempF, 1)}°F`, `measured at ${d.water.name}`]] : null);
+  ] : (wt ? [['Water temp', `${fmtNum(wt.tempF, 1)}°F`, wt.from]] : null);
   /* Where both a gauge and the model are available, show the gap: agreement is
      reassuring and disagreement is worth knowing about. */
   if (mc && gauge && typeof mc.sea_surface_temperature === 'number') {
@@ -529,8 +558,8 @@ function renderQuickReference(host) {
     if (ti < 0) ti = Math.min(2, (daily.time || []).length - 1);
     const sun = sunTimes(new Date(), l.lat, l.lon);
     const mc = d && d.marine && d.marine.current;
-    const waterF = d && d.water ? d.water.tempF
-      : (mc && typeof mc.sea_surface_temperature === 'number' ? mc.sea_surface_temperature : null);
+    const w = waterTemp(l, d);
+    const waterF = w ? w.tempF : null;
     return {
       l, cur, d,
       icon: cur ? wmoInfo(cur.weather_code, cur.is_day == null ? 1 : cur.is_day) : null,
@@ -643,12 +672,11 @@ function renderOverview(host) {
       ['💨', `${fmtNum(cur.wind_speed_10m, 0)} ${degToCompass(cur.wind_direction_10m)}`, 'Wind mph'],
       ['☁️', `${fmtNum(cur.cloud_cover, 0)}%`, 'Cloud cover']
     ];
-    const waterF = d.water ? d.water.tempF
-      : (mc && typeof mc.sea_surface_temperature === 'number' ? mc.sea_surface_temperature : null);
+    const wt = waterTemp(l, d);
+    const waterF = wt ? wt.tempF : null;
     if (waterF != null)
       chips.push(['🌊', `${fmtNum(waterF, 0)}°`,
-        (d.water ? `measured at ${d.water.name}` : 'marine model')
-        + (l.marine.proxy ? ` — ${l.marine.proxyDistanceMi} mi from this home` : '')]);
+        wt.from + (l.marine.proxy ? ` — ${l.marine.proxyDistanceMi} mi from this home` : '')]);
 
     card.innerHTML = `
       <div class="ov-head">
@@ -1461,7 +1489,10 @@ function renderCharts() {
     'Days gusting to 25 mph or more.',
     svg => barChart(svg, { values: vals('breezyDays'), labels: MONTHS, color: isDark() ? '#199e70' : '#1baf7a', unit: 'days', dec: 1, selected: sel, onClick })]);
   defs.push(['wind', false, 'Gale-force days',
-    `Days gusting to 39 mph — tropical-storm force. ${l.marine.proxy ? '' : 'The Atlantic hurricane season runs 1 June to 30 November, which is the hump you are looking at.'}`,
+    `Days gusting to 39 mph — tropical-storm force. These are the gusts the record
+     contains, whatever produced them: at all three homes the peak is late winter
+     and early spring, when frontal systems and nor'easters do the work, not the
+     hurricane season.`,
     svg => barChart(svg, { values: vals('strongWindDays'), labels: MONTHS, color: isDark() ? '#d95926' : '#eb6834', unit: 'days', dec: 1, selected: sel, onClick })]);
   if (rows.some(r => (r.severeWindDays || 0) > 0.01))
     defs.push(['wind', false, 'Damaging wind days',
@@ -1739,8 +1770,14 @@ function renderDiagnostics() {
       ${c && c.meta && c.meta.modelNote && c.meta.modelNote !== c.meta.model ? `<br><span style="color:var(--muted)">${esc(c.meta.modelNote)}</span>` : ''}</div>
     <div><b>Accuracy check</b> — ${validationLine()}</div>
     <div><b>Severe weather alerts</b> — US National Weather Service (api.weather.gov), active watches and warnings for each home's exact coordinates.</div>
-    <div><b>Water temperature</b> — NOAA CO-OPS tide gauge (${esc(l.marine.coopsName || 'n/a')}, station ${esc(l.marine.coopsStation || '—')}),
-      a physical sensor. The marine model is shown alongside it as corroboration.</div>
+    <div><b>Water temperature</b> — ${l.marine.preferGauge === false
+      ? `the marine model at ${esc(l.marine.proxyName || l.short)}. NOAA has no water-temperature
+         sensor there; of the 239 CO-OPS stations that report one, the nearest is
+         ${esc(l.marine.coopsName || 'n/a')} (station ${esc(l.marine.coopsStation || '—')}), which sits
+         26 miles north inside Raritan Bay, so it is shown as corroboration rather than as the figure.`
+      : `NOAA CO-OPS tide gauge (${esc(l.marine.coopsName || 'n/a')}, station ${esc(l.marine.coopsStation || '—')}),
+         a physical sensor in the water being described. The marine model is shown alongside it
+         as corroboration.`}</div>
     <div><b>Backup provider</b> — if Open-Meteo is unreachable, current conditions fall back to the nearest
       National Weather Service station observation, so an outage at one provider does not blank the page.</div>
     <div><b>Ocean temperature and waves</b> — Open-Meteo Marine API at ${esc(l.marine.label)}${c && c.meta && c.meta.sst && c.meta.sst.years ? ` · ${c.meta.sst.years} years retrieved` : ''}.</div>
