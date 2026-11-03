@@ -78,7 +78,7 @@ ok('carries all three homes', Object.keys(j.homes).length === 3, Object.keys(j.h
 
 for (const [id, r] of Object.entries(REF)) {
   const periods = j.homes[id];
-  if (!periods) { ok(`${r.name} present`, false); continue; }
+  if (!periods || !Object.keys(periods).length) { ok(`${r.name} present`, false); continue; }
   const key = Object.keys(periods)[0];
   const set = periods[key];
   const rows = set.rows, a = set.annual;

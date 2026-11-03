@@ -6,6 +6,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import os from 'os';
+import { spawnSync } from 'child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -151,6 +153,60 @@ ok('the rebuilt period is present and complete',
    mj.homes.nmb['2011-2025'].rows.length === 12);
 ok('all three homes still in the file', Object.keys(mj.homes).length === 3);
 fs.rmSync(mergePath, { force: true });
+
+/* A failed refresh must not delete the last usable set for that period. */
+console.log('\n\x1b[1mpartial refresh keeps the last good data\x1b[0m');
+const partialPath = path.join(ROOT, 'test', 'shots', 'climate-partial.json');
+const previous = JSON.parse(JSON.stringify(j));
+previous.homes.nmb[cfg.DEFAULT_PERIOD].meta.built = -1;
+fs.writeFileSync(partialPath, JSON.stringify(previous));
+const api = createRequire(import.meta.url)(path.join(ROOT, 'js/api.js'));
+const origArchive = api.fetchArchive;
+api.fetchArchive = (loc, ...args) => {
+  if (loc.id === 'bonita') throw new Error('This operation was aborted');
+  return origArchive(loc, ...args);
+};
+process.argv = [process.argv[0], 'build-climate.mjs', '--pause', '0', '--out', partialPath];
+process.exit = c => { exitCode = c; };
+console.log = () => {};
+try {
+  await import('../scripts/build-climate.mjs?partial');
+} finally {
+  api.fetchArchive = origArchive;
+  console.log = origLog;
+  process.exit = origExit;
+}
+const pj = JSON.parse(fs.readFileSync(partialPath, 'utf8'));
+ok('a failed archive request reports a partial refresh', exitCode === 2, `exit ${exitCode}`);
+ok('the failed home keeps its previous data and metadata',
+   JSON.stringify(pj.homes.bonita) === JSON.stringify(previous.homes.bonita));
+ok('successful homes are still refreshed', pj.homes.nmb[cfg.DEFAULT_PERIOD].meta.built !== -1);
+ok('periods outside the refresh are unchanged',
+   JSON.stringify(pj.homes.nmb['1996-2025']) === JSON.stringify(previous.homes.nmb['1996-2025']));
+fs.rmSync(partialPath, { force: true });
+
+/* An empty home must produce a failed check, not an uncaught TypeError. */
+console.log('\n\x1b[1mspot-check handles incomplete snapshots\x1b[0m');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spot-check-'));
+try {
+  for (const dir of ['js', 'scripts']) fs.cpSync(path.join(ROOT, dir), path.join(tmp, dir), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'test'));
+  fs.mkdirSync(path.join(tmp, 'data'));
+  fs.copyFileSync(path.join(ROOT, 'test', 'spot-check.mjs'), path.join(tmp, 'test', 'spot-check.mjs'));
+  for (const empty of [true, false]) {
+    const snapshot = JSON.parse(JSON.stringify(j));
+    if (empty) snapshot.homes.bonita = {};
+    else delete snapshot.homes.bonita;
+    fs.writeFileSync(path.join(tmp, 'data', 'climate.json'), JSON.stringify(snapshot));
+    const result = spawnSync(process.execPath, [path.join(tmp, 'test', 'spot-check.mjs')], { encoding: 'utf8' });
+    ok(`spot-check reports an ${empty ? 'empty' : 'absent'} home without crashing`,
+       result.status === 1 && /Bonita Springs, FL present/.test(result.stdout)
+         && /Rockaway, NJ/.test(result.stdout) && /passed, \d+ failed/.test(result.stdout)
+         && !result.stderr, result.stderr);
+  }
+} finally {
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);
