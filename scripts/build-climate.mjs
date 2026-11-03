@@ -153,13 +153,11 @@ const out = {
 
 let failures = 0;
 
-/* Carry forward every home/period this run is not rebuilding. */
+/* Keep existing sets until their replacements have been built successfully. */
 if (existing && existing.homes) {
   for (const [homeId, sets] of Object.entries(existing.homes)) {
     for (const [p, set] of Object.entries(sets)) {
       if (!cfg.PERIODS[p]) continue;                     // period no longer offered
-      const rebuilding = homes.some(h => h.id === homeId) && periods.includes(p);
-      if (rebuilding) continue;
       (out.homes[homeId] || (out.homes[homeId] = {}))[p] = set;
     }
   }
